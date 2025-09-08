@@ -78,35 +78,31 @@
           let canvas = document.getElementById('canvas');
           let ctx = canvas.getContext('2d');
           
-          // Scale the image to fit the canvas size, maintaining aspect ratio
-          let canvasWidth = canvas.width;
-          let canvasHeight = canvas.height;
+          // Image dimensions
           let imageWidth = img.width;
           let imageHeight = img.height;
 
-          // Calculate the scaling factors
-          let scaleX = canvasWidth / imageWidth;
-          let scaleY = canvasHeight / imageHeight;
+          // Calculate scaling factor to fit the canvas (400x400)
+          let scaleX = canvas.width / imageWidth;
+          let scaleY = canvas.height / imageHeight;
           let scale = Math.min(scaleX, scaleY); // Scale based on the smallest dimension
 
-          // Calculate scaled dimensions
+          // Clear the canvas
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+          // Draw image centered in canvas
           let scaledWidth = imageWidth * scale;
           let scaledHeight = imageHeight * scale;
-
-          // Clear the canvas before drawing
-          ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-
-          // Draw the scaled image onto the canvas, ensuring it's centered
-          let offsetX = (canvasWidth - scaledWidth) / 2;
-          let offsetY = (canvasHeight - scaledHeight) / 2;
+          let offsetX = (canvas.width - scaledWidth) / 2;
+          let offsetY = (canvas.height - scaledHeight) / 2;
           ctx.drawImage(img, offsetX, offsetY, scaledWidth, scaledHeight);
 
-          // Create a Mat from the canvas image
+          // Now process the image using OpenCV
           let mat = cv.imread(canvas);
           let gray = new cv.Mat();
           cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
 
-          // Apply Gaussian blur to reduce noise
+          // Apply Gaussian blur
           let blurred = new cv.Mat();
           cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
 
@@ -119,15 +115,15 @@
           let hierarchy = new cv.Mat();
           cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-          // Approximate the contours into polygons with minimal distortion
+          // Now approximate the contours to polygons
           let polygons = [];
           for (let i = 0; i < contours.size(); i++) {
             let contour = contours.get(i);
             let approx = new cv.Mat();
             // Approximate the contour into a polygon with a tolerance
-            cv.approxPolyDP(contour, approx, 5, true);  // Slightly increase tolerance for smoother polygons
+            cv.approxPolyDP(contour, approx, 5, true);
 
-            // Convert to a JS array for easier processing
+            // Convert to JS array for easier processing
             let polygon = [];
             for (let j = 0; j < approx.rows; j++) {
               let point = approx.data32S.subarray(j * 2, j * 2 + 2);
@@ -143,10 +139,10 @@
             allPoints.push(...polygon);
           });
 
-          // Scale the points to the canvas size
+          // Apply scaling to the contour points for canvas (0, 0 to 400, 400)
           allPoints = allPoints.map(([x, y]) => [
-            Math.round(x * scaleX), // Scale x coordinates to canvas
-            Math.round(y * scaleY)  // Scale y coordinates to canvas
+            Math.round(x * scale), // Scale x coordinates to canvas
+            Math.round(y * scale)  // Scale y coordinates to canvas
           ]);
 
           // Ensure the polygon is closed by adding the first point at the end
