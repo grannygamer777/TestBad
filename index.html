@@ -1,180 +1,199 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Image to CMU Polygon Code</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Image to CMU Polygon Code (Bad Apple helper)</title>
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
   <style>
-    body {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      margin: 0;
-      background-color: #f0f0f0;
-      flex-direction: column;
-    }
-    #canvas {
-      border: 1px solid black;
-      margin-bottom: 20px;
-    }
-    #output-container {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-    #output {
-      white-space: pre-wrap;
-      font-family: monospace;
-      width: 100%;
-      max-width: 500px;
-      height: 200px;
-      margin-bottom: 10px;
-      padding: 10px;
-      border: 1px solid #ccc;
-      overflow: auto;
-      background-color: #fafafa;
-    }
-    #copy-button {
-      padding: 10px 20px;
-      font-size: 16px;
-      cursor: pointer;
-      background-color: #4CAF50;
-      color: white;
-      border: none;
-      border-radius: 5px;
-    }
-    #copy-button:hover {
-      background-color: #45a049;
-    }
+    body { display:flex; flex-direction:column; align-items:center; gap:12px; margin:0; padding:16px; background:#f5f5f5; font-family:system-ui, sans-serif; }
+    #row { display:flex; gap:20px; align-items:flex-start; }
+    #canvas { border:1px solid #000; background:#fff; }
+    #controls { display:flex; flex-direction:column; gap:8px; }
+    #output { white-space:pre-wrap; font-family:monospace; width:480px; height:160px; padding:8px; border:1px solid #ccc; background:#fafafa; }
+    label { display:flex; align-items:center; gap:6px; }
+    input[type="range"] { width:240px; }
+    button { padding:8px 12px; cursor:pointer; }
+    .note { font-size:12px; color:#444; }
   </style>
 </head>
 <body>
+  <h1>Convert Image to CMU Polygon Code</h1>
 
-  <div>
-    <h1>Convert Image to CMU Polygon Code</h1>
-    <input type="file" id="file-input" accept="image/*" />
-    <canvas id="canvas" width="400" height="400"></canvas>
+  <div id="row">
+    <div>
+      <input type="file" id="file-input" accept="image/*" />
+      <br/><br/>
+      <canvas id="canvas" width="400" height="400"></canvas>
+    </div>
 
-    <div id="output-container">
+    <div id="controls">
+      <label>
+        <input type="checkbox" id="invert-toggle" checked />
+        Treat BLACK shapes as foreground (invert)
+      </label>
+
+      <label>
+        Smoothing (ε = % of perimeter)
+        <input type="range" id="smooth" min="0" max="5" step="0.1" value="1" />
+        <span id="smooth-val">1%</span>
+      </label>
+
+      <label>
+        <input type="checkbox" id="show-preview" checked />
+        Draw polygon preview
+      </label>
+
+      <button id="process">Reprocess</button>
       <textarea id="output" readonly></textarea>
       <button id="copy-button">Copy Code</button>
+      <div class="note">Tip: if the subject/background flips, toggle the “invert” box.</div>
     </div>
   </div>
 
   <script>
-    function onOpenCvReady() {
-      console.log("OpenCV.js is ready.");
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const outputEl = document.getElementById('output');
+    const invertEl = document.getElementById('invert-toggle');
+    const smoothEl = document.getElementById('smooth');
+    const smoothVal = document.getElementById('smooth-val');
+    const showPreviewEl = document.getElementById('show-preview');
+    const processBtn = document.getElementById('process');
+
+    let img = null, lastImageBitmap = null;
+
+    function drawImageToCanvas(image) {
+      const cw = canvas.width, ch = canvas.height;
+      ctx.clearRect(0, 0, cw, ch);
+      // Fill white so the outside area isn't “accidentally black”
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, cw, ch);
+
+      const iw = image.width, ih = image.height;
+      const scale = Math.min(cw / iw, ch / ih);
+      const w = Math.round(iw * scale), h = Math.round(ih * scale);
+      const ox = Math.floor((cw - w) / 2), oy = Math.floor((ch - h) / 2);
+      ctx.drawImage(image, ox, oy, w, h);
+      return { ox, oy, w, h };
     }
 
-    document.getElementById('file-input').addEventListener('change', function (e) {
-      let file = e.target.files[0];
-      let reader = new FileReader();
-      reader.onload = function(event) {
-        let img = new Image();
-        img.onload = function() {
-          let canvas = document.getElementById('canvas');
-          let ctx = canvas.getContext('2d');
-          
-          let imageWidth = img.width;
-          let imageHeight = img.height;
+    function processFrame() {
+      if (!cv || !lastImageBitmap) return;
 
-          let scaleX = canvas.width / imageWidth;
-          let scaleY = canvas.height / imageHeight;
-          let scale = Math.min(scaleX, scaleY);
+      const { ox, oy, w, h } = drawImageToCanvas(lastImageBitmap);
 
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const mat = cv.imread(canvas);
+      const gray = new cv.Mat();
+      cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
 
-          let scaledWidth = imageWidth * scale;
-          let scaledHeight = imageHeight * scale;
-          let offsetX = (canvas.width - scaledWidth) / 2;
-          let offsetY = (canvas.height - scaledHeight) / 2;
-          ctx.drawImage(img, offsetX, offsetY, scaledWidth, scaledHeight);
+      // Slight blur to remove speckles
+      const blur = new cv.Mat();
+      cv.GaussianBlur(gray, blur, new cv.Size(3,3), 0, 0, cv.BORDER_DEFAULT);
 
-          // OpenCV processing
-          let mat = cv.imread(canvas);
-          let gray = new cv.Mat();
-          cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
+      // Threshold — invert if we want black shapes as foreground
+      const thresh = new cv.Mat();
+      const useInvert = invertEl.checked;
+      const mode = useInvert ? cv.THRESH_BINARY_INV | cv.THRESH_OTSU
+                             : cv.THRESH_BINARY     | cv.THRESH_OTSU;
+      cv.threshold(blur, thresh, 0, 255, mode);
 
-          // Use simple global thresholding instead of adaptive
-          let thresholded = new cv.Mat();
-          cv.threshold(gray, thresholded, 127, 255, cv.THRESH_BINARY);
+      // Find contours (only external; we ignore background later anyway)
+      const contours = new cv.MatVector();
+      const hierarchy = new cv.Mat();
+      cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-          // Find contours
-          let contours = new cv.MatVector();
-          let hierarchy = new cv.Mat();
-          cv.findContours(thresholded, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      // Ignore full-frame background rectangles accidentally captured
+      const canvasArea = canvas.width * canvas.height;
+      let best = null, bestArea = 0;
 
-          // Select the largest contour
-          let largestContour = null;
-          let maxArea = 0;
-          for (let i = 0; i < contours.size(); i++) {
-            let contour = contours.get(i);
-            let area = cv.contourArea(contour);
-            if (area > maxArea) {
-              maxArea = area;
-              largestContour = contour;
-            }
-          }
+      for (let i = 0; i < contours.size(); i++) {
+        const c = contours.get(i);
+        const area = cv.contourArea(c, false);
+        // Skip almost-full-canvas blobs
+        if (area > 0.95 * canvasArea) continue;
 
-          // Approximate largest contour
-          let approx = new cv.Mat();
-          if (largestContour) {
-            let peri = cv.arcLength(largestContour, true);
-            cv.approxPolyDP(largestContour, approx, 0.01 * peri, true);
-          }
+        // Skip ones hugging the exact frame edges (likely background)
+        const rect = cv.boundingRect(c);
+        const touchesEdge = rect.x <= 1 || rect.y <= 1 ||
+                            rect.x + rect.width >= canvas.width - 1 ||
+                            rect.y + rect.height >= canvas.height - 1;
+        if (touchesEdge && area > 0.5 * canvasArea) continue;
 
-          // Convert to JS array
-          let allPoints = [];
-          for (let j = 0; j < approx.rows; j++) {
-            let point = approx.data32S.subarray(j * 2, j * 2 + 2);
-            allPoints.push([point[0], point[1]]);
-          }
+        if (area > bestArea) { bestArea = area; best = c; }
+      }
 
-          // Scale & round
-          allPoints = allPoints.map(([x, y]) => [
-            Math.round(x), 
-            Math.round(y)
-          ]);
+      let polygonPts = [];
+      if (best) {
+        const peri = cv.arcLength(best, true);
+        const eps = Math.max(1, (parseFloat(smoothEl.value) / 100) * peri);
+        const approx = new cv.Mat();
+        cv.approxPolyDP(best, approx, eps, true);
 
-          // Ensure polygon is closed
-          if (allPoints.length > 0) {
-            allPoints.push(allPoints[0]);
-          }
+        for (let j = 0; j < approx.rows; j++) {
+          const p = approx.data32S.subarray(j * 2, j * 2 + 2);
+          polygonPts.push([p[0], p[1]]);
+        }
+        approx.delete();
+      }
 
-          // Generate CMU Polygon Code
-          let polygonCode = `Polygon(`;
-          allPoints.forEach(([x, y], i) => {
-            polygonCode += `${x},${y}`;
-            if (i < allPoints.length - 1) {
-              polygonCode += ',';
-            }
-          });
-          polygonCode += `, fill='black')\n`;
+      // Close polygon
+      if (polygonPts.length) polygonPts.push(polygonPts[0]);
 
-          // Show output
-          document.getElementById('output').value = polygonCode;
+      // Optional preview
+      drawImageToCanvas(lastImageBitmap);
+      if (showPreviewEl.checked && polygonPts.length) {
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#ff0000';
+        ctx.fillStyle = 'rgba(255,0,0,0.10)';
+        ctx.beginPath();
+        ctx.moveTo(polygonPts[0][0], polygonPts[0][1]);
+        for (let i = 1; i < polygonPts.length; i++) ctx.lineTo(polygonPts[i][0], polygonPts[i][1]);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
 
-          // Cleanup
-          mat.delete(); gray.delete(); thresholded.delete();
-          hierarchy.delete(); contours.delete(); approx.delete();
-        };
-        img.src = event.target.result;
+      // Emit CMU Polygon code (fill black to match Bad Apple silhouette)
+      let code = 'Polygon(';
+      for (let i = 0; i < polygonPts.length; i++) {
+        const [x, y] = polygonPts[i];
+        code += `${Math.round(x)},${Math.round(y)}${i < polygonPts.length - 1 ? ',' : ''}`;
+      }
+      code += ", fill='black')\n";
+      outputEl.value = polygonPts.length ? code : '// No foreground polygon detected';
+
+      // Cleanup
+      mat.delete(); gray.delete(); blur.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+    }
+
+    document.getElementById('file-input').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      img = new Image();
+      img.onload = async () => {
+        // Use ImageBitmap for speed & crisp scaling
+        lastImageBitmap = await createImageBitmap(img);
+        processFrame();
       };
-      reader.readAsDataURL(file);
+      img.src = URL.createObjectURL(file);
     });
 
-    if (cv.getBuildInformation) {
-      cv.onRuntimeInitialized = onOpenCvReady;
-    }
+    processBtn.addEventListener('click', processFrame);
 
-    document.getElementById('copy-button').addEventListener('click', function() {
-      let output = document.getElementById('output');
-      output.select();
+    smoothEl.addEventListener('input', () => {
+      smoothVal.textContent = `${smoothEl.value}%`;
+    });
+
+    document.getElementById('copy-button').addEventListener('click', () => {
+      outputEl.select();
       document.execCommand('copy');
       alert('Code copied to clipboard!');
     });
+
+    // OpenCV ready hook
+    function onOpenCvReady() { console.log('OpenCV.js ready'); }
+    if (window.cv) cv['onRuntimeInitialized'] = onOpenCvReady;
   </script>
 </body>
 </html>
