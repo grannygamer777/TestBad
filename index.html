@@ -102,18 +102,14 @@
           let gray = new cv.Mat();
           cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
 
-          // Apply Gaussian blur
-          let blurred = new cv.Mat();
-          cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+          // Apply Adaptive Thresholding (more reliable for black-and-white silhouettes)
+          let thresholded = new cv.Mat();
+          cv.adaptiveThreshold(gray, thresholded, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 11, 2);
 
-          // Apply Canny edge detection
-          let edges = new cv.Mat();
-          cv.Canny(blurred, edges, 100, 200);
-
-          // Find contours
+          // Find contours from the thresholded image
           let contours = new cv.MatVector();
           let hierarchy = new cv.Mat();
-          cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+          cv.findContours(thresholded, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
           // Now approximate the contours to polygons
           let polygons = [];
@@ -141,7 +137,7 @@
 
           // Apply scaling to the contour points for canvas (0, 0 to 400, 400)
           allPoints = allPoints.map(([x, y]) => [
-            Math.round(x * scale), // Apply rounding instead of flooring
+            Math.round(x * scale), // Apply rounding to ensure correct alignment
             Math.round(y * scale)  // Round y coordinates
           ]);
 
@@ -164,8 +160,7 @@
           // Clean up OpenCV Mat objects to avoid memory leaks
           mat.delete();
           gray.delete();
-          blurred.delete();
-          edges.delete();
+          thresholded.delete();
           hierarchy.delete();
           contours.delete();
         };
