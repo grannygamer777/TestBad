@@ -109,6 +109,17 @@
             return [scaledX, scaledY];
           });
 
+          // Draw the polygon on the canvas
+          ctx.beginPath();
+          ctx.moveTo(scaledPolygon[0][0], scaledPolygon[0][1]);
+          scaledPolygon.forEach(([x, y]) => {
+            ctx.lineTo(x, y);
+          });
+          ctx.closePath();
+          ctx.strokeStyle = 'black';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
           // Generate CMU Polygon Code (formatted output)
           let polygonCode = `Polygon(`;
           scaledPolygon.forEach(([x, y], i) => {
