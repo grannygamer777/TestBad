@@ -120,9 +120,16 @@
 
         if (colorToggleEl.checked) {
           // -------- COLOR QUANTIZATION MODE --------
-          let samples = mat.clone();
-          samples.convertTo(samples, cv.CV_32F);
-          samples = samples.reshape(3, mat.rows * mat.cols); // fix for OpenCV.js
+          let samples = new cv.Mat(mat.rows * mat.cols, 3, cv.CV_32F);
+          for (let y = 0; y < mat.rows; y++) {
+            for (let x = 0; x < mat.cols; x++) {
+              const px = mat.ucharPtr(y, x);
+              const idx = y * mat.cols + x;
+              samples.floatPtr(idx)[0] = px[0]; // R
+              samples.floatPtr(idx)[1] = px[1]; // G
+              samples.floatPtr(idx)[2] = px[2]; // B
+            }
+          }
 
           let K = parseInt(colorCountEl.value);
           let labels = new cv.Mat();
@@ -133,13 +140,10 @@
 
           centers.convertTo(centers, cv.CV_8U);
 
-          // Build masks per cluster
           for (let k = 0; k < K; k++) {
             let mask = cv.Mat.zeros(mat.rows, mat.cols, cv.CV_8UC1);
             for (let i = 0; i < labels.rows; i++) {
-              if (labels.intAt(i, 0) === k) {
-                mask.data[i] = 255;
-              }
+              if (labels.intAt(i, 0) === k) mask.data[i] = 255;
             }
 
             let clusterContours = new cv.MatVector();
@@ -182,7 +186,6 @@
           }
 
           samples.delete(); labels.delete(); centers.delete();
-
         } else {
           // -------- MONO MODE --------
           let bestIdx = -1, bestArea = 0;
@@ -212,7 +215,6 @@
           }
         }
 
-        // Draw preview
         drawImageToCanvas(lastImageBitmap);
         if (showPreviewEl.checked) {
           ctx.lineWidth = 2;
@@ -233,7 +235,6 @@
           });
         }
 
-        // Generate CMU Polygon code
         let code = '';
         polygonsOut.forEach(poly => {
           if (!poly.pts.length) return;
