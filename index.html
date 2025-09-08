@@ -50,44 +50,45 @@
           let hierarchy = new cv.Mat();
           cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
+          // Merge all contours into one large contour (if possible)
+          let allPoints = [];
+          for (let i = 0; i < contours.size(); i++) {
+            let contour = contours.get(i);
+            for (let j = 0; j < contour.rows; j++) {
+              let point = contour.data32S.subarray(j * 2, j * 2 + 2);
+              allPoints.push([point[0], point[1]]);
+            }
+          }
+
+          // Approximate the entire edge shape into a single polygon
+          let allPointsMat = cv.matFromArray(allPoints.length, 1, cv.CV_32SC2, new Int32Array(allPoints.flat()));
+          let approx = new cv.Mat();
+          cv.approxPolyDP(allPointsMat, approx, 3, true);
+
+          // Convert Mat to JS array for easy processing
+          let polygon = [];
+          for (let j = 0; j < approx.rows; j++) {
+            let point = approx.data32S.subarray(j * 2, j * 2 + 2);
+            polygon.push([point[0], point[1]]);
+          }
+
+          // Generate CMU Polygon Code (formatted output)
+          let polygonCode = `Polygon(`;
+          polygon.forEach(([x, y], i) => {
+            polygonCode += `${x},${y}`;
+            if (i < polygon.length - 1) {
+              polygonCode += ','; // Add comma between coordinates
+            }
+          });
+          polygonCode += `, fill='black')\n`; // Add the fill attribute at the end
+
+          // Display the result in the output section
+          document.getElementById('output').textContent = polygonCode;
+
           // Draw the original image on the canvas for reference
           let canvas = document.getElementById('canvas');
           let ctx = canvas.getContext('2d');
           cv.imshow(canvas, mat);
-
-          // Convert contours to polygons and store them
-          let polygons = [];
-          for (let i = 0; i < contours.size(); i++) {
-            let contour = contours.get(i);
-            let approx = new cv.Mat();
-            // Approximate the contour to a polygon
-            cv.approxPolyDP(contour, approx, 3, true);
-            
-            // Convert Mat to JS array for easy processing
-            let polygon = [];
-            for (let j = 0; j < approx.rows; j++) {
-              let point = approx.data32S.subarray(j * 2, j * 2 + 2);
-              polygon.push([point[0], point[1]]);
-            }
-            polygons.push(polygon);
-            approx.delete();
-          }
-
-          // Generate CMU Polygon Code (formatted output)
-          let polygonCode = '';
-          polygons.forEach((polygon, index) => {
-            polygonCode += `Polygon(`;
-            polygon.forEach(([x, y], i) => {
-              polygonCode += `${x},${y}`;
-              if (i < polygon.length - 1) {
-                polygonCode += ','; // Add comma between coordinates
-              }
-            });
-            polygonCode += `, fill='black')\n`; // Add the fill attribute at the end
-          });
-
-          // Display the result in the output section
-          document.getElementById('output').textContent = polygonCode;
 
           // Clean up OpenCV Mat objects to avoid memory leaks
           mat.delete();
@@ -95,6 +96,8 @@
           edges.delete();
           hierarchy.delete();
           contours.delete();
+          allPointsMat.delete();
+          approx.delete();
         };
         img.src = event.target.result;
       };
