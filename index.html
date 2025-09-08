@@ -55,7 +55,7 @@
   <div>
     <h1>Convert Image to CMU Polygon Code</h1>
     <input type="file" id="file-input" accept="image/*" />
-    <canvas id="canvas" width="500" height="500"></canvas>
+    <canvas id="canvas" width="400" height="400"></canvas>
 
     <div id="output-container">
       <textarea id="output" readonly></textarea>
@@ -136,6 +136,18 @@
           polygons.forEach(polygon => {
             allPoints.push(...polygon);
           });
+
+          // Scale the points to the canvas size
+          let scaleX = canvas.width / img.width;
+          let scaleY = canvas.height / img.height;
+
+          allPoints = allPoints.map(([x, y]) => [
+            Math.round(x * scaleX), // Scale x coordinates
+            Math.round(y * scaleY)  // Scale y coordinates
+          ]);
+
+          // Ensure the polygon is closed by adding the first point at the end
+          allPoints.push(allPoints[0]);
 
           // Generate CMU Polygon Code
           let polygonCode = `Polygon(`;
