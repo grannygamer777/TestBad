@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Image to CMU Polygon Code (Bad Apple + Color)</title>
+  <title>Image to CMU Polygon Code (Fixed Color Mode)</title>
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
   <style>
     body { display:flex; flex-direction:column; align-items:center; gap:12px; margin:0; padding:16px; background:#f5f5f5; font-family:system-ui, sans-serif; }
@@ -18,7 +18,7 @@
   </style>
 </head>
 <body>
-  <h1>Convert Image to CMU Polygon Code</h1>
+  <h1>Convert Image to CMU Polygon Code (Fixed Color Mode)</h1>
 
   <div id="row">
     <div>
@@ -67,7 +67,7 @@
     const colorToggleEl = document.getElementById('color-toggle');
     const processBtn = document.getElementById('process');
 
-    let img = null, lastImageBitmap = null;
+    let lastImageBitmap = null;
 
     function drawImageToCanvas(image) {
       const cw = canvas.width, ch = canvas.height;
@@ -83,135 +83,157 @@
       return { ox, oy, w, h };
     }
 
-    function averageColor(mask, bbox, src) {
-      const subMat = src.roi(bbox);
-      const masked = new cv.Mat();
-      cv.bitwise_and(subMat, subMat, masked, mask);
-      const mean = cv.mean(masked, mask);
-      masked.delete(); subMat.delete();
-      return `#${[mean[0], mean[1], mean[2]].map(v => Math.round(v).toString(16).padStart(2, '0')).join('')}`;
+    // Average color inside the bounding box using the provided binary mask.
+    // IMPORTANT: mask is full-size; we crop it to bbox to match the src ROI.
+    function averageColor(maskFull, bbox, srcFull) {
+      if (!bbox || bbox.width <= 0 || bbox.height <= 0) return '#000000';
+      const maskROI = maskFull.roi(bbox);  // crop mask to bbox
+      const srcROI = srcFull.roi(bbox);    // crop source to bbox
+      // mean(srcROI, maskROI) returns an array; for RGBA images the order will be channels in the mat.
+      const meanScalar = cv.mean(srcROI, maskROI);
+      // meanScalar is a Scalar-like object [c0, c1, c2, c3]. We'll use the first three channels.
+      const c0 = Math.round(meanScalar[0]);
+      const c1 = Math.round(meanScalar[1]);
+      const c2 = Math.round(meanScalar[2]);
+      // Convert to hex (clamp 0-255)
+      const toHex = v => (Math.max(0, Math.min(255, v))).toString(16).padStart(2,'0');
+      const hex = '#' + toHex(c0) + toHex(c1) + toHex(c2);
+      maskROI.delete(); srcROI.delete();
+      return hex;
     }
 
     function processFrame() {
-      if (!cv || !lastImageBitmap) return;
+      try {
+        if (!cv || !lastImageBitmap) return;
+        drawImageToCanvas(lastImageBitmap);
 
-      drawImageToCanvas(lastImageBitmap);
+        const mat = cv.imread(canvas);
+        const gray = new cv.Mat();
+        cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
 
-      const mat = cv.imread(canvas);
-      const gray = new cv.Mat();
-      cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
+        const blur = new cv.Mat();
+        cv.GaussianBlur(gray, blur, new cv.Size(3,3), 0);
 
-      const blur = new cv.Mat();
-      cv.GaussianBlur(gray, blur, new cv.Size(3,3), 0);
+        const thresh = new cv.Mat();
+        const useInvert = invertEl.checked;
+        const mode = useInvert ? cv.THRESH_BINARY_INV | cv.THRESH_OTSU
+                               : cv.THRESH_BINARY     | cv.THRESH_OTSU;
+        cv.threshold(blur, thresh, 0, 255, mode);
 
-      const thresh = new cv.Mat();
-      const useInvert = invertEl.checked;
-      const mode = useInvert ? cv.THRESH_BINARY_INV | cv.THRESH_OTSU
-                             : cv.THRESH_BINARY     | cv.THRESH_OTSU;
-      cv.threshold(blur, thresh, 0, 255, mode);
+        const contours = new cv.MatVector();
+        const hierarchy = new cv.Mat();
+        cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-      const contours = new cv.MatVector();
-      const hierarchy = new cv.Mat();
-      cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+        const canvasArea = canvas.width * canvas.height;
+        const epsPercent = parseFloat(smoothEl.value) / 100;
 
-      const canvasArea = canvas.width * canvas.height;
-      const epsPercent = parseFloat(smoothEl.value) / 100;
+        let polygonsOut = [];
 
-      let polygonsOut = [];
+        if (colorToggleEl.checked) {
+          // Multi-color mode: iterate all contours and extract average color
+          for (let i = 0; i < contours.size(); i++) {
+            const c = contours.get(i);
+            const area = cv.contourArea(c, false);
+            if (area < 10) { c.delete(); continue; } // ignore tiny specks
+            if (area > 0.95 * canvasArea) { c.delete(); continue; } // ignore full-frame bg
 
-      if (colorToggleEl.checked) {
-        // Multi-color mode: output all polygons with average color
-        for (let i = 0; i < contours.size(); i++) {
-          const c = contours.get(i);
-          const area = cv.contourArea(c, false);
-          if (area < 10) continue; // ignore tiny specks
-          if (area > 0.95 * canvasArea) continue; // ignore full-frame bg
+            const peri = cv.arcLength(c, true);
+            const eps = Math.max(1, epsPercent * peri);
+            const approx = new cv.Mat();
+            cv.approxPolyDP(c, approx, eps, true);
 
-          const peri = cv.arcLength(c, true);
-          const eps = Math.max(1, epsPercent * peri);
-          const approx = new cv.Mat();
-          cv.approxPolyDP(c, approx, eps, true);
+            let pts = [];
+            for (let j = 0; j < approx.rows; j++) {
+              const p = approx.data32S.subarray(j * 2, j * 2 + 2);
+              pts.push([p[0], p[1]]);
+            }
+            if (pts.length) pts.push(pts[0]);
 
-          let pts = [];
-          for (let j = 0; j < approx.rows; j++) {
-            const p = approx.data32S.subarray(j * 2, j * 2 + 2);
-            pts.push([p[0], p[1]]);
+            // Build a mask for this contour (full-size), then compute average color in its bounding box
+            const bbox = cv.boundingRect(c);
+            const mask = cv.Mat.zeros(thresh.rows, thresh.cols, cv.CV_8UC1);
+            // drawContours expects a contour vector; passing "contours" and index i draws the i-th contour
+            cv.drawContours(mask, contours, i, new cv.Scalar(255), -1);
+
+            const colorHex = averageColor(mask, bbox, mat);
+            mask.delete();
+
+            polygonsOut.push({ pts, color: colorHex });
+
+            approx.delete();
+            c.delete(); // we called get(i) — delete this contour mat now
           }
-          if (pts.length) pts.push(pts[0]);
+        } else {
+          // Mono mode: pick largest foreground contour only
+          let bestIdx = -1, bestArea = 0;
+          for (let i = 0; i < contours.size(); i++) {
+            const c = contours.get(i);
+            const area = cv.contourArea(c, false);
+            if (area > bestArea && area < 0.95 * canvasArea) { bestArea = area; bestIdx = i; }
+            c.delete();
+          }
+          if (bestIdx >= 0) {
+            const best = contours.get(bestIdx);
+            const peri = cv.arcLength(best, true);
+            const eps = Math.max(1, epsPercent * peri);
+            const approx = new cv.Mat();
+            cv.approxPolyDP(best, approx, eps, true);
 
-          // Get fill color
-          const bbox = cv.boundingRect(c);
-          const mask = cv.Mat.zeros(thresh.rows, thresh.cols, cv.CV_8UC1);
-          cv.drawContours(mask, contours, i, new cv.Scalar(255,255,255,255), -1);
-          const color = averageColor(mask, bbox, mat);
-          mask.delete();
+            let pts = [];
+            for (let j = 0; j < approx.rows; j++) {
+              const p = approx.data32S.subarray(j * 2, j * 2 + 2);
+              pts.push([p[0], p[1]]);
+            }
+            if (pts.length) pts.push(pts[0]);
+            polygonsOut.push({ pts, color: 'black' });
 
-          polygonsOut.push({ pts, color });
-          approx.delete();
-        }
-      } else {
-        // Mono mode: pick largest foreground contour only
-        let best = null, bestArea = 0;
-        for (let i = 0; i < contours.size(); i++) {
-          const c = contours.get(i);
-          const area = cv.contourArea(c, false);
-          if (area > bestArea && area < 0.95 * canvasArea) {
-            bestArea = area; best = c;
+            approx.delete();
+            best.delete();
           }
         }
-        if (best) {
-          const peri = cv.arcLength(best, true);
-          const eps = Math.max(1, epsPercent * peri);
-          const approx = new cv.Mat();
-          cv.approxPolyDP(best, approx, eps, true);
 
-          let pts = [];
-          for (let j = 0; j < approx.rows; j++) {
-            const p = approx.data32S.subarray(j * 2, j * 2 + 2);
-            pts.push([p[0], p[1]]);
-          }
-          if (pts.length) pts.push(pts[0]);
-          polygonsOut.push({ pts, color: 'black' });
-          approx.delete();
+        // Draw preview
+        drawImageToCanvas(lastImageBitmap);
+        if (showPreviewEl.checked) {
+          ctx.lineWidth = 2;
+          polygonsOut.forEach(poly => {
+            ctx.strokeStyle = poly.color;
+            // Try 8-digit hex with alpha; if not supported, use rgba fallback
+            const fillHex = (poly.color.length === 7) ? (poly.color + '33') : poly.color;
+            ctx.fillStyle = fillHex;
+            ctx.beginPath();
+            ctx.moveTo(poly.pts[0][0], poly.pts[0][1]);
+            for (let i = 1; i < poly.pts.length; i++) ctx.lineTo(poly.pts[i][0], poly.pts[i][1]);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+          });
         }
-      }
 
-      // Draw preview
-      drawImageToCanvas(lastImageBitmap);
-      if (showPreviewEl.checked) {
-        ctx.lineWidth = 2;
+        // Generate CMU Polygon code
+        let code = '';
         polygonsOut.forEach(poly => {
-          ctx.strokeStyle = poly.color;
-          ctx.fillStyle = poly.color + '33'; // semi-transparent
-          ctx.beginPath();
-          ctx.moveTo(poly.pts[0][0], poly.pts[0][1]);
-          for (let i = 1; i < poly.pts.length; i++) ctx.lineTo(poly.pts[i][0], poly.pts[i][1]);
-          ctx.closePath();
-          ctx.fill();
-          ctx.stroke();
+          if (!poly.pts.length) return;
+          code += 'Polygon(';
+          poly.pts.forEach(([x, y], i) => {
+            code += `${Math.round(x)},${Math.round(y)}${i < poly.pts.length - 1 ? ',' : ''}`;
+          });
+          code += `, fill='${poly.color}')\n`;
         });
+
+        outputEl.value = code || '// No polygons detected';
+        // cleanup
+        mat.delete(); gray.delete(); blur.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+      } catch (e) {
+        console.error(e);
+        outputEl.value = `// Error during processing: ${e.message}`;
       }
-
-      // Generate CMU Polygon code
-      let code = '';
-      polygonsOut.forEach(poly => {
-        code += 'Polygon(';
-        poly.pts.forEach(([x, y], i) => {
-          code += `${Math.round(x)},${Math.round(y)}${i < poly.pts.length - 1 ? ',' : ''}`;
-        });
-        code += `, fill='${poly.color}')\n`;
-      });
-
-      outputEl.value = code || '// No polygons detected';
-
-      // Cleanup
-      mat.delete(); gray.delete(); blur.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
     }
 
     document.getElementById('file-input').addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      img = new Image();
+      const img = new Image();
       img.onload = async () => {
         lastImageBitmap = await createImageBitmap(img);
         processFrame();
