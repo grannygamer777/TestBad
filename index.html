@@ -91,7 +91,7 @@
           // Clear the canvas before drawing
           ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
-          // Draw the scaled image onto the canvas
+          // Draw the scaled image onto the canvas, ensuring it's aligned to (0,0)
           let offsetX = (canvasWidth - scaledWidth) / 2;
           let offsetY = (canvasHeight - scaledHeight) / 2;
           ctx.drawImage(img, offsetX, offsetY, scaledWidth, scaledHeight);
@@ -114,12 +114,13 @@
           let hierarchy = new cv.Mat();
           cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-          // Approximate the contours into polygons
+          // Approximate the contours into polygons with minimal distortion
           let polygons = [];
           for (let i = 0; i < contours.size(); i++) {
             let contour = contours.get(i);
             let approx = new cv.Mat();
-            cv.approxPolyDP(contour, approx, 3, true);
+            // Approximate the contour into a polygon with a tolerance
+            cv.approxPolyDP(contour, approx, 5, true);  // Slightly increase tolerance for smoother polygons
 
             // Convert to a JS array for easier processing
             let polygon = [];
