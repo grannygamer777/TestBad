@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image to CMU Polygon Code</title>
+  <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+  <style>
+    #canvas {
+      border: 1px solid black;
+    }
+    #output {
+      white-space: pre-wrap;
+      margin-top: 20px;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Convert Image to CMU Polygon Code</h1>
+  <input type="file" id="file-input" accept="image/*" />
+  <canvas id="canvas" width="500" height="500"></canvas>
+  <pre id="output"></pre>
+
+  <script>
+    // Wait for OpenCV to be ready
+    function onOpenCvReady() {
+      console.log("OpenCV.js is ready.");
+    }
+
+    // Event listener for image upload
+    document.getElementById('file-input').addEventListener('change', function (e) {
+      let file = e.target.files[0];
+      let reader = new FileReader();
+      reader.onload = function(event) {
+        let img = new Image();
+        img.onload = function() {
+          // Initialize OpenCV and create a Mat from the image
+          let mat = cv.imread(img);
+          let gray = new cv.Mat();
+          cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
+
+          // Apply edge detection (Canny)
+          let edges = new cv.Mat();
+          cv.Canny(gray, edges, 100, 200);
+
+          // Find contours in the edge-detected image
+          let contours = new cv.MatVector();
+          let hierarchy = new cv.Mat();
+          cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+          // Draw the original image on the canvas for reference
+          let canvas = document.getElementById('canvas');
+          let ctx = canvas.getContext('2d');
+          cv.imshow(canvas, mat);
+
+          // Convert contours to polygons and store them
+          let polygons = [];
+          for (let i = 0; i < contours.size(); i++) {
+            let contour = contours.get(i);
+            let approx = new cv.Mat();
+            // Approximate the contour to a polygon
+            cv.approxPolyDP(contour, approx, 3, true);
+            
+            // Convert Mat to JS array for easy processing
+            let polygon = [];
+            for (let j = 0; j < approx.rows; j++) {
+              let point = approx.data32S.subarray(j * 2, j * 2 + 2);
+              polygon.push([point[0], point[1]]);
+            }
+            polygons.push(polygon);
+            approx.delete();
+          }
+
+          // Generate CMU Polygon Code (formatted output)
+          let polygonCode = '';
+          polygons.forEach((polygon, index) => {
+            polygonCode += `Polygon(`;
+            polygon.forEach(([x, y], i) => {
+              polygonCode += `${x},${y}`;
+              if (i < polygon.length - 1) {
+                polygonCode += ','; // Add comma between coordinates
+              }
+            });
+            polygonCode += `, fill='black')\n`; // Add the fill attribute at the end
+          });
+
+          // Display the result in the output section
+          document.getElementById('output').textContent = polygonCode;
+
+          // Clean up OpenCV Mat objects to avoid memory leaks
+          mat.delete();
+          gray.delete();
+          edges.delete();
+          hierarchy.delete();
+          contours.delete();
+        };
+        img.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // Initialize OpenCV when it's ready
+    if (cv.getBuildInformation) {
+      cv.onRuntimeInitialized = onOpenCvReady;
+    }
+  </script>
+</body>
+</html>
