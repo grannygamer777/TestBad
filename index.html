@@ -6,6 +6,14 @@
   <title>Image to CMU Polygon Code</title>
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
   <style>
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+      background-color: #f0f0f0;
+    }
     #canvas {
       border: 1px solid black;
     }
@@ -18,26 +26,48 @@
 </head>
 <body>
 
-  <h1>Convert Image to CMU Polygon Code</h1>
-  <input type="file" id="file-input" accept="image/*" />
-  <canvas id="canvas" width="500" height="500"></canvas>
-  <pre id="output"></pre>
+  <div>
+    <h1>Convert Image to CMU Polygon Code</h1>
+    <input type="file" id="file-input" accept="image/*" />
+    <canvas id="canvas" width="500" height="500"></canvas>
+    <pre id="output"></pre>
+  </div>
 
   <script>
-    // Wait for OpenCV to be ready
     function onOpenCvReady() {
       console.log("OpenCV.js is ready.");
     }
 
-    // Event listener for image upload
     document.getElementById('file-input').addEventListener('change', function (e) {
       let file = e.target.files[0];
       let reader = new FileReader();
       reader.onload = function(event) {
         let img = new Image();
         img.onload = function() {
-          // Initialize OpenCV and create a Mat from the image
-          let mat = cv.imread(img);
+          // Get canvas and context
+          let canvas = document.getElementById('canvas');
+          let ctx = canvas.getContext('2d');
+          
+          // Scale the image to fit the canvas size, maintaining aspect ratio
+          let canvasWidth = canvas.width;
+          let canvasHeight = canvas.height;
+          let imageWidth = img.width;
+          let imageHeight = img.height;
+
+          let scale = Math.min(canvasWidth / imageWidth, canvasHeight / imageHeight);
+          let scaledWidth = imageWidth * scale;
+          let scaledHeight = imageHeight * scale;
+
+          // Clear the canvas before drawing
+          ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+          // Draw the scaled image onto the canvas
+          let offsetX = (canvasWidth - scaledWidth) / 2;
+          let offsetY = (canvasHeight - scaledHeight) / 2;
+          ctx.drawImage(img, offsetX, offsetY, scaledWidth, scaledHeight);
+
+          // Create a Mat from the image for OpenCV processing
+          let mat = cv.imread(canvas);
           let gray = new cv.Mat();
           cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
 
@@ -72,11 +102,18 @@
             polygon.push([point[0], point[1]]);
           }
 
+          // Scale and translate polygon to fit the canvas size
+          let scaledPolygon = polygon.map(([x, y]) => {
+            let scaledX = offsetX + x * scale;
+            let scaledY = offsetY + y * scale;
+            return [scaledX, scaledY];
+          });
+
           // Generate CMU Polygon Code (formatted output)
           let polygonCode = `Polygon(`;
-          polygon.forEach(([x, y], i) => {
+          scaledPolygon.forEach(([x, y], i) => {
             polygonCode += `${x},${y}`;
-            if (i < polygon.length - 1) {
+            if (i < scaledPolygon.length - 1) {
               polygonCode += ','; // Add comma between coordinates
             }
           });
@@ -84,11 +121,6 @@
 
           // Display the result in the output section
           document.getElementById('output').textContent = polygonCode;
-
-          // Draw the original image on the canvas for reference
-          let canvas = document.getElementById('canvas');
-          let ctx = canvas.getContext('2d');
-          cv.imshow(canvas, mat);
 
           // Clean up OpenCV Mat objects to avoid memory leaks
           mat.delete();
@@ -104,7 +136,6 @@
       reader.readAsDataURL(file);
     });
 
-    // Initialize OpenCV when it's ready
     if (cv.getBuildInformation) {
       cv.onRuntimeInitialized = onOpenCvReady;
     }
