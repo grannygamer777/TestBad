@@ -13,14 +13,40 @@
       height: 100vh;
       margin: 0;
       background-color: #f0f0f0;
+      flex-direction: column;
     }
     #canvas {
       border: 1px solid black;
+      margin-bottom: 20px;
+    }
+    #output-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
     }
     #output {
       white-space: pre-wrap;
-      margin-top: 20px;
       font-family: monospace;
+      width: 100%;
+      max-width: 500px;
+      height: 200px;
+      margin-bottom: 10px;
+      padding: 10px;
+      border: 1px solid #ccc;
+      overflow: auto;
+      background-color: #fafafa;
+    }
+    #copy-button {
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 5px;
+    }
+    #copy-button:hover {
+      background-color: #45a049;
     }
   </style>
 </head>
@@ -30,7 +56,11 @@
     <h1>Convert Image to CMU Polygon Code</h1>
     <input type="file" id="file-input" accept="image/*" />
     <canvas id="canvas" width="500" height="500"></canvas>
-    <pre id="output"></pre>
+
+    <div id="output-container">
+      <textarea id="output" readonly></textarea>
+      <button id="copy-button">Copy Code</button>
+    </div>
   </div>
 
   <script>
@@ -71,76 +101,62 @@
           let gray = new cv.Mat();
           cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
 
-          // Apply edge detection (Canny)
-          let edges = new cv.Mat();
-          cv.Canny(gray, edges, 100, 200);
+          // Apply Gaussian blur to reduce noise
+          let blurred = new cv.Mat();
+          cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
 
-          // Find contours in the edge-detected image
+          // Apply Canny edge detection
+          let edges = new cv.Mat();
+          cv.Canny(blurred, edges, 100, 200);
+
+          // Find contours
           let contours = new cv.MatVector();
           let hierarchy = new cv.Mat();
           cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-          // Merge all contours into one large contour (if possible)
-          let allPoints = [];
+          // Approximate the contours into polygons
+          let polygons = [];
           for (let i = 0; i < contours.size(); i++) {
             let contour = contours.get(i);
-            for (let j = 0; j < contour.rows; j++) {
-              let point = contour.data32S.subarray(j * 2, j * 2 + 2);
-              allPoints.push([point[0], point[1]]);
+            let approx = new cv.Mat();
+            cv.approxPolyDP(contour, approx, 3, true);
+
+            // Convert to a JS array for easier processing
+            let polygon = [];
+            for (let j = 0; j < approx.rows; j++) {
+              let point = approx.data32S.subarray(j * 2, j * 2 + 2);
+              polygon.push([point[0], point[1]]);
             }
+            polygons.push(polygon);
+            approx.delete();
           }
 
-          // Approximate the entire edge shape into a single polygon
-          let allPointsMat = cv.matFromArray(allPoints.length, 1, cv.CV_32SC2, new Int32Array(allPoints.flat()));
-          let approx = new cv.Mat();
-          cv.approxPolyDP(allPointsMat, approx, 3, true);
-
-          // Convert Mat to JS array for easy processing
-          let polygon = [];
-          for (let j = 0; j < approx.rows; j++) {
-            let point = approx.data32S.subarray(j * 2, j * 2 + 2);
-            polygon.push([point[0], point[1]]);
-          }
-
-          // Scale and translate polygon to fit the canvas size
-          let scaledPolygon = polygon.map(([x, y]) => {
-            let scaledX = offsetX + x * scale;
-            let scaledY = offsetY + y * scale;
-            return [scaledX, scaledY];
+          // Flatten polygons into one large polygon if needed
+          let allPoints = [];
+          polygons.forEach(polygon => {
+            allPoints.push(...polygon);
           });
 
-          // Draw the polygon on the canvas
-          ctx.beginPath();
-          ctx.moveTo(scaledPolygon[0][0], scaledPolygon[0][1]);
-          scaledPolygon.forEach(([x, y]) => {
-            ctx.lineTo(x, y);
-          });
-          ctx.closePath();
-          ctx.strokeStyle = 'black';
-          ctx.lineWidth = 2;
-          ctx.stroke();
-
-          // Generate CMU Polygon Code (formatted output)
+          // Generate CMU Polygon Code
           let polygonCode = `Polygon(`;
-          scaledPolygon.forEach(([x, y], i) => {
+          allPoints.forEach(([x, y], i) => {
             polygonCode += `${x},${y}`;
-            if (i < scaledPolygon.length - 1) {
+            if (i < allPoints.length - 1) {
               polygonCode += ','; // Add comma between coordinates
             }
           });
           polygonCode += `, fill='black')\n`; // Add the fill attribute at the end
 
           // Display the result in the output section
-          document.getElementById('output').textContent = polygonCode;
+          document.getElementById('output').value = polygonCode;
 
           // Clean up OpenCV Mat objects to avoid memory leaks
           mat.delete();
           gray.delete();
+          blurred.delete();
           edges.delete();
           hierarchy.delete();
           contours.delete();
-          allPointsMat.delete();
-          approx.delete();
         };
         img.src = event.target.result;
       };
@@ -150,6 +166,14 @@
     if (cv.getBuildInformation) {
       cv.onRuntimeInitialized = onOpenCvReady;
     }
+
+    // Add copy-to-clipboard functionality
+    document.getElementById('copy-button').addEventListener('click', function() {
+      let output = document.getElementById('output');
+      output.select();
+      document.execCommand('copy'); // Copy the code to the clipboard
+      alert('Code copied to clipboard!');
+    });
   </script>
 </body>
 </html>
