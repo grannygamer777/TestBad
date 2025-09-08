@@ -74,95 +74,91 @@
       reader.onload = function(event) {
         let img = new Image();
         img.onload = function() {
-          // Get canvas and context
           let canvas = document.getElementById('canvas');
           let ctx = canvas.getContext('2d');
           
-          // Image dimensions
           let imageWidth = img.width;
           let imageHeight = img.height;
 
-          // Calculate scaling factor to fit the canvas (400x400)
           let scaleX = canvas.width / imageWidth;
           let scaleY = canvas.height / imageHeight;
-          let scale = Math.min(scaleX, scaleY); // Scale based on the smallest dimension
+          let scale = Math.min(scaleX, scaleY);
 
-          // Clear the canvas
           ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-          // Draw image centered in canvas
           let scaledWidth = imageWidth * scale;
           let scaledHeight = imageHeight * scale;
           let offsetX = (canvas.width - scaledWidth) / 2;
           let offsetY = (canvas.height - scaledHeight) / 2;
           ctx.drawImage(img, offsetX, offsetY, scaledWidth, scaledHeight);
 
-          // Now process the image using OpenCV
+          // OpenCV processing
           let mat = cv.imread(canvas);
           let gray = new cv.Mat();
           cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
 
-          // Apply Adaptive Thresholding (more reliable for black-and-white silhouettes)
+          // Use simple global thresholding instead of adaptive
           let thresholded = new cv.Mat();
-          cv.adaptiveThreshold(gray, thresholded, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 11, 2);
+          cv.threshold(gray, thresholded, 127, 255, cv.THRESH_BINARY);
 
-          // Find contours from the thresholded image
+          // Find contours
           let contours = new cv.MatVector();
           let hierarchy = new cv.Mat();
           cv.findContours(thresholded, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-          // Now approximate the contours to polygons
-          let polygons = [];
+          // Select the largest contour
+          let largestContour = null;
+          let maxArea = 0;
           for (let i = 0; i < contours.size(); i++) {
             let contour = contours.get(i);
-            let approx = new cv.Mat();
-            // Approximate the contour into a polygon with a tolerance
-            cv.approxPolyDP(contour, approx, 5, true);
-
-            // Convert to JS array for easier processing
-            let polygon = [];
-            for (let j = 0; j < approx.rows; j++) {
-              let point = approx.data32S.subarray(j * 2, j * 2 + 2);
-              polygon.push([point[0], point[1]]);
+            let area = cv.contourArea(contour);
+            if (area > maxArea) {
+              maxArea = area;
+              largestContour = contour;
             }
-            polygons.push(polygon);
-            approx.delete();
           }
 
-          // Flatten polygons into one large polygon if needed
-          let allPoints = [];
-          polygons.forEach(polygon => {
-            allPoints.push(...polygon);
-          });
+          // Approximate largest contour
+          let approx = new cv.Mat();
+          if (largestContour) {
+            let peri = cv.arcLength(largestContour, true);
+            cv.approxPolyDP(largestContour, approx, 0.01 * peri, true);
+          }
 
-          // Apply scaling to the contour points for canvas (0, 0 to 400, 400)
+          // Convert to JS array
+          let allPoints = [];
+          for (let j = 0; j < approx.rows; j++) {
+            let point = approx.data32S.subarray(j * 2, j * 2 + 2);
+            allPoints.push([point[0], point[1]]);
+          }
+
+          // Scale & round
           allPoints = allPoints.map(([x, y]) => [
-            Math.round(x * scale), // Apply rounding to ensure correct alignment
-            Math.round(y * scale)  // Round y coordinates
+            Math.round(x), 
+            Math.round(y)
           ]);
 
-          // Ensure the polygon is closed by adding the first point at the end
-          allPoints.push(allPoints[0]);
+          // Ensure polygon is closed
+          if (allPoints.length > 0) {
+            allPoints.push(allPoints[0]);
+          }
 
           // Generate CMU Polygon Code
           let polygonCode = `Polygon(`;
           allPoints.forEach(([x, y], i) => {
             polygonCode += `${x},${y}`;
             if (i < allPoints.length - 1) {
-              polygonCode += ','; // Add comma between coordinates
+              polygonCode += ',';
             }
           });
-          polygonCode += `, fill='black')\n`; // Add the fill attribute at the end
+          polygonCode += `, fill='black')\n`;
 
-          // Display the result in the output section
+          // Show output
           document.getElementById('output').value = polygonCode;
 
-          // Clean up OpenCV Mat objects to avoid memory leaks
-          mat.delete();
-          gray.delete();
-          thresholded.delete();
-          hierarchy.delete();
-          contours.delete();
+          // Cleanup
+          mat.delete(); gray.delete(); thresholded.delete();
+          hierarchy.delete(); contours.delete(); approx.delete();
         };
         img.src = event.target.result;
       };
@@ -173,11 +169,10 @@
       cv.onRuntimeInitialized = onOpenCvReady;
     }
 
-    // Add copy-to-clipboard functionality
     document.getElementById('copy-button').addEventListener('click', function() {
       let output = document.getElementById('output');
       output.select();
-      document.execCommand('copy'); // Copy the code to the clipboard
+      document.execCommand('copy');
       alert('Code copied to clipboard!');
     });
   </script>
