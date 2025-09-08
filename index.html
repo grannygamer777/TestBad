@@ -84,19 +84,24 @@
           let imageWidth = img.width;
           let imageHeight = img.height;
 
-          let scale = Math.min(canvasWidth / imageWidth, canvasHeight / imageHeight);
+          // Calculate the scaling factors
+          let scaleX = canvasWidth / imageWidth;
+          let scaleY = canvasHeight / imageHeight;
+          let scale = Math.min(scaleX, scaleY); // Scale based on the smallest dimension
+
+          // Calculate scaled dimensions
           let scaledWidth = imageWidth * scale;
           let scaledHeight = imageHeight * scale;
 
           // Clear the canvas before drawing
           ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
-          // Draw the scaled image onto the canvas, ensuring it's aligned to (0,0)
+          // Draw the scaled image onto the canvas, ensuring it's centered
           let offsetX = (canvasWidth - scaledWidth) / 2;
           let offsetY = (canvasHeight - scaledHeight) / 2;
           ctx.drawImage(img, offsetX, offsetY, scaledWidth, scaledHeight);
 
-          // Create a Mat from the image for OpenCV processing
+          // Create a Mat from the canvas image
           let mat = cv.imread(canvas);
           let gray = new cv.Mat();
           cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
@@ -139,12 +144,9 @@
           });
 
           // Scale the points to the canvas size
-          let scaleX = canvas.width / img.width;
-          let scaleY = canvas.height / img.height;
-
           allPoints = allPoints.map(([x, y]) => [
-            Math.round(x * scaleX), // Scale x coordinates
-            Math.round(y * scaleY)  // Scale y coordinates
+            Math.round(x * scaleX), // Scale x coordinates to canvas
+            Math.round(y * scaleY)  // Scale y coordinates to canvas
           ]);
 
           // Ensure the polygon is closed by adding the first point at the end
