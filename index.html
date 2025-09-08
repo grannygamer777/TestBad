@@ -141,16 +141,12 @@
 
           // Apply scaling to the contour points for canvas (0, 0 to 400, 400)
           allPoints = allPoints.map(([x, y]) => [
-            Math.floor(x * scale), // Floor x coordinates to integer values
-            Math.floor(y * scale)  // Floor y coordinates to integer values
+            Math.round(x * scale), // Apply rounding instead of flooring
+            Math.round(y * scale)  // Round y coordinates
           ]);
 
           // Ensure the polygon is closed by adding the first point at the end
           allPoints.push(allPoints[0]);
-
-          // Order points counter-clockwise
-          // This is to ensure correct polygon drawing and filling
-          allPoints.sort((a, b) => Math.atan2(b[1] - a[1], b[0] - a[0]));
 
           // Generate CMU Polygon Code
           let polygonCode = `Polygon(`;
