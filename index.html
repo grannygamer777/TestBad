@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Image to CMU Polygon Code (Bad Apple helper)</title>
+  <title>Image to CMU Polygon Code (Bad Apple + Color)</title>
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
   <style>
     body { display:flex; flex-direction:column; align-items:center; gap:12px; margin:0; padding:16px; background:#f5f5f5; font-family:system-ui, sans-serif; }
     #row { display:flex; gap:20px; align-items:flex-start; }
     #canvas { border:1px solid #000; background:#fff; }
     #controls { display:flex; flex-direction:column; gap:8px; }
-    #output { white-space:pre-wrap; font-family:monospace; width:480px; height:160px; padding:8px; border:1px solid #ccc; background:#fafafa; }
+    #output { white-space:pre-wrap; font-family:monospace; width:480px; height:200px; padding:8px; border:1px solid #ccc; background:#fafafa; }
     label { display:flex; align-items:center; gap:6px; }
     input[type="range"] { width:240px; }
     button { padding:8px 12px; cursor:pointer; }
@@ -44,10 +44,15 @@
         Draw polygon preview
       </label>
 
+      <label>
+        <input type="checkbox" id="color-toggle" />
+        Enable Color Mode (multi-shape)
+      </label>
+
       <button id="process">Reprocess</button>
       <textarea id="output" readonly></textarea>
       <button id="copy-button">Copy Code</button>
-      <div class="note">Tip: if the subject/background flips, toggle the “invert” box.</div>
+      <div class="note">Use “Color Mode” for multi-colored polygons, uncheck for mono Bad Apple style.</div>
     </div>
   </div>
 
@@ -59,6 +64,7 @@
     const smoothEl = document.getElementById('smooth');
     const smoothVal = document.getElementById('smooth-val');
     const showPreviewEl = document.getElementById('show-preview');
+    const colorToggleEl = document.getElementById('color-toggle');
     const processBtn = document.getElementById('process');
 
     let img = null, lastImageBitmap = null;
@@ -66,7 +72,6 @@
     function drawImageToCanvas(image) {
       const cw = canvas.width, ch = canvas.height;
       ctx.clearRect(0, 0, cw, ch);
-      // Fill white so the outside area isn't “accidentally black”
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, cw, ch);
 
@@ -78,90 +83,126 @@
       return { ox, oy, w, h };
     }
 
+    function averageColor(mask, bbox, src) {
+      const subMat = src.roi(bbox);
+      const masked = new cv.Mat();
+      cv.bitwise_and(subMat, subMat, masked, mask);
+      const mean = cv.mean(masked, mask);
+      masked.delete(); subMat.delete();
+      return `#${[mean[0], mean[1], mean[2]].map(v => Math.round(v).toString(16).padStart(2, '0')).join('')}`;
+    }
+
     function processFrame() {
       if (!cv || !lastImageBitmap) return;
 
-      const { ox, oy, w, h } = drawImageToCanvas(lastImageBitmap);
+      drawImageToCanvas(lastImageBitmap);
 
       const mat = cv.imread(canvas);
       const gray = new cv.Mat();
       cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
 
-      // Slight blur to remove speckles
       const blur = new cv.Mat();
-      cv.GaussianBlur(gray, blur, new cv.Size(3,3), 0, 0, cv.BORDER_DEFAULT);
+      cv.GaussianBlur(gray, blur, new cv.Size(3,3), 0);
 
-      // Threshold — invert if we want black shapes as foreground
       const thresh = new cv.Mat();
       const useInvert = invertEl.checked;
       const mode = useInvert ? cv.THRESH_BINARY_INV | cv.THRESH_OTSU
                              : cv.THRESH_BINARY     | cv.THRESH_OTSU;
       cv.threshold(blur, thresh, 0, 255, mode);
 
-      // Find contours (only external; we ignore background later anyway)
       const contours = new cv.MatVector();
       const hierarchy = new cv.Mat();
       cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-      // Ignore full-frame background rectangles accidentally captured
       const canvasArea = canvas.width * canvas.height;
-      let best = null, bestArea = 0;
+      const epsPercent = parseFloat(smoothEl.value) / 100;
 
-      for (let i = 0; i < contours.size(); i++) {
-        const c = contours.get(i);
-        const area = cv.contourArea(c, false);
-        // Skip almost-full-canvas blobs
-        if (area > 0.95 * canvasArea) continue;
+      let polygonsOut = [];
 
-        // Skip ones hugging the exact frame edges (likely background)
-        const rect = cv.boundingRect(c);
-        const touchesEdge = rect.x <= 1 || rect.y <= 1 ||
-                            rect.x + rect.width >= canvas.width - 1 ||
-                            rect.y + rect.height >= canvas.height - 1;
-        if (touchesEdge && area > 0.5 * canvasArea) continue;
+      if (colorToggleEl.checked) {
+        // Multi-color mode: output all polygons with average color
+        for (let i = 0; i < contours.size(); i++) {
+          const c = contours.get(i);
+          const area = cv.contourArea(c, false);
+          if (area < 10) continue; // ignore tiny specks
+          if (area > 0.95 * canvasArea) continue; // ignore full-frame bg
 
-        if (area > bestArea) { bestArea = area; best = c; }
-      }
+          const peri = cv.arcLength(c, true);
+          const eps = Math.max(1, epsPercent * peri);
+          const approx = new cv.Mat();
+          cv.approxPolyDP(c, approx, eps, true);
 
-      let polygonPts = [];
-      if (best) {
-        const peri = cv.arcLength(best, true);
-        const eps = Math.max(1, (parseFloat(smoothEl.value) / 100) * peri);
-        const approx = new cv.Mat();
-        cv.approxPolyDP(best, approx, eps, true);
+          let pts = [];
+          for (let j = 0; j < approx.rows; j++) {
+            const p = approx.data32S.subarray(j * 2, j * 2 + 2);
+            pts.push([p[0], p[1]]);
+          }
+          if (pts.length) pts.push(pts[0]);
 
-        for (let j = 0; j < approx.rows; j++) {
-          const p = approx.data32S.subarray(j * 2, j * 2 + 2);
-          polygonPts.push([p[0], p[1]]);
+          // Get fill color
+          const bbox = cv.boundingRect(c);
+          const mask = cv.Mat.zeros(thresh.rows, thresh.cols, cv.CV_8UC1);
+          cv.drawContours(mask, contours, i, new cv.Scalar(255,255,255,255), -1);
+          const color = averageColor(mask, bbox, mat);
+          mask.delete();
+
+          polygonsOut.push({ pts, color });
+          approx.delete();
         }
-        approx.delete();
+      } else {
+        // Mono mode: pick largest foreground contour only
+        let best = null, bestArea = 0;
+        for (let i = 0; i < contours.size(); i++) {
+          const c = contours.get(i);
+          const area = cv.contourArea(c, false);
+          if (area > bestArea && area < 0.95 * canvasArea) {
+            bestArea = area; best = c;
+          }
+        }
+        if (best) {
+          const peri = cv.arcLength(best, true);
+          const eps = Math.max(1, epsPercent * peri);
+          const approx = new cv.Mat();
+          cv.approxPolyDP(best, approx, eps, true);
+
+          let pts = [];
+          for (let j = 0; j < approx.rows; j++) {
+            const p = approx.data32S.subarray(j * 2, j * 2 + 2);
+            pts.push([p[0], p[1]]);
+          }
+          if (pts.length) pts.push(pts[0]);
+          polygonsOut.push({ pts, color: 'black' });
+          approx.delete();
+        }
       }
 
-      // Close polygon
-      if (polygonPts.length) polygonPts.push(polygonPts[0]);
-
-      // Optional preview
+      // Draw preview
       drawImageToCanvas(lastImageBitmap);
-      if (showPreviewEl.checked && polygonPts.length) {
+      if (showPreviewEl.checked) {
         ctx.lineWidth = 2;
-        ctx.strokeStyle = '#ff0000';
-        ctx.fillStyle = 'rgba(255,0,0,0.10)';
-        ctx.beginPath();
-        ctx.moveTo(polygonPts[0][0], polygonPts[0][1]);
-        for (let i = 1; i < polygonPts.length; i++) ctx.lineTo(polygonPts[i][0], polygonPts[i][1]);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
+        polygonsOut.forEach(poly => {
+          ctx.strokeStyle = poly.color;
+          ctx.fillStyle = poly.color + '33'; // semi-transparent
+          ctx.beginPath();
+          ctx.moveTo(poly.pts[0][0], poly.pts[0][1]);
+          for (let i = 1; i < poly.pts.length; i++) ctx.lineTo(poly.pts[i][0], poly.pts[i][1]);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        });
       }
 
-      // Emit CMU Polygon code (fill black to match Bad Apple silhouette)
-      let code = 'Polygon(';
-      for (let i = 0; i < polygonPts.length; i++) {
-        const [x, y] = polygonPts[i];
-        code += `${Math.round(x)},${Math.round(y)}${i < polygonPts.length - 1 ? ',' : ''}`;
-      }
-      code += ", fill='black')\n";
-      outputEl.value = polygonPts.length ? code : '// No foreground polygon detected';
+      // Generate CMU Polygon code
+      let code = '';
+      polygonsOut.forEach(poly => {
+        code += 'Polygon(';
+        poly.pts.forEach(([x, y], i) => {
+          code += `${Math.round(x)},${Math.round(y)}${i < poly.pts.length - 1 ? ',' : ''}`;
+        });
+        code += `, fill='${poly.color}')\n`;
+      });
+
+      outputEl.value = code || '// No polygons detected';
 
       // Cleanup
       mat.delete(); gray.delete(); blur.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
@@ -172,7 +213,6 @@
       if (!file) return;
       img = new Image();
       img.onload = async () => {
-        // Use ImageBitmap for speed & crisp scaling
         lastImageBitmap = await createImageBitmap(img);
         processFrame();
       };
@@ -180,18 +220,11 @@
     });
 
     processBtn.addEventListener('click', processFrame);
-
-    smoothEl.addEventListener('input', () => {
-      smoothVal.textContent = `${smoothEl.value}%`;
-    });
-
+    smoothEl.addEventListener('input', () => { smoothVal.textContent = `${smoothEl.value}%`; });
     document.getElementById('copy-button').addEventListener('click', () => {
-      outputEl.select();
-      document.execCommand('copy');
-      alert('Code copied to clipboard!');
+      outputEl.select(); document.execCommand('copy'); alert('Code copied to clipboard!');
     });
 
-    // OpenCV ready hook
     function onOpenCvReady() { console.log('OpenCV.js ready'); }
     if (window.cv) cv['onRuntimeInitialized'] = onOpenCvReady;
   </script>
