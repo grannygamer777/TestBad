@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Image to CMU Polygon Code</title>
+  <title>Image to CMU Polygon Code (Color Quantization)</title>
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
   <style>
     body { display:flex; flex-direction:column; align-items:center; gap:12px; margin:0; padding:16px; background:#f5f5f5; font-family:system-ui, sans-serif; }
@@ -120,8 +120,10 @@
 
         if (colorToggleEl.checked) {
           // -------- COLOR QUANTIZATION MODE --------
-          let samples = mat.reshape(1, mat.rows * mat.cols);
+          let samples = mat.clone();
           samples.convertTo(samples, cv.CV_32F);
+          samples = samples.reshape(3, mat.rows * mat.cols); // fix for OpenCV.js
+
           let K = parseInt(colorCountEl.value);
           let labels = new cv.Mat();
           let centers = new cv.Mat();
