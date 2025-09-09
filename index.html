@@ -263,7 +263,11 @@
       let allCodes = '';
       for (const file of files) {
         const { code } = await processImageFile(file);
-        allCodes += `// ${file.name}\n${code || '// No polygons detected'}\n\n`;
+        if (code) {
+          allCodes += `${code}sleep(0.04)\n`;
+        } else {
+          allCodes += `// No polygons detected\nsleep(0.04)\n`;
+        }
       }
       outputEl.value = allCodes;
     });
