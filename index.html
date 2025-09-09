@@ -3,15 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Image/GIF to CMU Polygon Code</title>
+  <title>Batch Image to CMU Polygon Code</title>
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
-  <script src="https://unpkg.com/gifuct-js/dist/gifuct.min.js"></script>
   <style>
     body { display:flex; flex-direction:column; align-items:center; gap:12px; margin:0; padding:16px; background:#f5f5f5; font-family:system-ui, sans-serif; }
     #row { display:flex; gap:20px; align-items:flex-start; }
     #canvas { border:1px solid #000; background:#fff; }
     #controls { display:flex; flex-direction:column; gap:8px; }
-    #output { white-space:pre-wrap; font-family:monospace; width:480px; height:200px; padding:8px; border:1px solid #ccc; background:#fafafa; }
+    #output { white-space:pre-wrap; font-family:monospace; width:600px; height:300px; padding:8px; border:1px solid #ccc; background:#fafafa; }
     label { display:flex; align-items:center; gap:6px; }
     input[type="range"] { width:240px; }
     button { padding:8px 12px; cursor:pointer; }
@@ -19,12 +18,15 @@
   </style>
 </head>
 <body>
-  <h1>Convert Image/GIF to CMU Polygon Code</h1>
+  <h1>Batch Convert Images to CMU Polygon Code</h1>
 
   <div id="row">
     <div>
       <input type="file" id="file-input" accept="image/*" />
       <br/><br/>
+      <input type="file" id="folder-input" webkitdirectory directory multiple />
+      <label class="note">Select folder (expects 00001.png → 06572.png)</label>
+      <br/>
       <canvas id="canvas" width="400" height="400"></canvas>
     </div>
 
@@ -36,8 +38,8 @@
 
       <label>
         Smoothing (ε = % of perimeter)
-        <input type="range" id="smooth" min="0" max="5" step="0.1" value="1" />
-        <span id="smooth-val">1%</span>
+        <input type="range" id="smooth" min="0" max="5" step="0.1" value="0" />
+        <span id="smooth-val">0%</span>
       </label>
 
       <label>
@@ -56,10 +58,10 @@
         <span id="color-count-val">8</span>
       </label>
 
-      <button id="process">Reprocess</button>
+      <button id="process">Reprocess Current</button>
       <textarea id="output" readonly></textarea>
       <button id="copy-button">Copy Code</button>
-      <div class="note">Mono mode = black silhouette. Color mode = vectorized color clusters. GIFs are processed frame by frame.</div>
+      <div class="note">Mono mode = black silhouette. Color mode = vectorized color clusters.</div>
     </div>
   </div>
 
@@ -76,8 +78,7 @@
     const colorCountVal = document.getElementById('color-count-val');
     const processBtn = document.getElementById('process');
 
-    let lastImageBitmap = null; // For static images
-    let gifFrames = null;       // For GIF frames
+    let lastImageBitmap = null;
 
     function drawImageToCanvas(image) {
       const cw = canvas.width, ch = canvas.height;
@@ -94,233 +95,196 @@
     }
 
     function processMat(mat) {
-      const polygonsOut = [];
-      try {
-        const gray = new cv.Mat();
-        cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
+      const gray = new cv.Mat();
+      cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
 
-        const blur = new cv.Mat();
-        cv.GaussianBlur(gray, blur, new cv.Size(3,3), 0);
+      const blur = new cv.Mat();
+      cv.GaussianBlur(gray, blur, new cv.Size(3,3), 0);
 
-        const thresh = new cv.Mat();
-        const useInvert = invertEl.checked;
-        const mode = useInvert ? cv.THRESH_BINARY_INV | cv.THRESH_OTSU
-                               : cv.THRESH_BINARY     | cv.THRESH_OTSU;
-        cv.threshold(blur, thresh, 0, 255, mode);
+      const thresh = new cv.Mat();
+      const useInvert = invertEl.checked;
+      const mode = useInvert ? cv.THRESH_BINARY_INV | cv.THRESH_OTSU
+                             : cv.THRESH_BINARY     | cv.THRESH_OTSU;
+      cv.threshold(blur, thresh, 0, 255, mode);
 
-        const contours = new cv.MatVector();
-        const hierarchy = new cv.Mat();
-        cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      const contours = new cv.MatVector();
+      const hierarchy = new cv.Mat();
+      cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-        const canvasArea = canvas.width * canvas.height;
-        const epsPercent = parseFloat(smoothEl.value) / 100;
+      const canvasArea = canvas.width * canvas.height;
+      const epsPercent = parseFloat(smoothEl.value) / 100;
 
-        if (colorToggleEl.checked) {
-          // Color quantization
-          let samples = new cv.Mat(mat.rows * mat.cols, 3, cv.CV_32F);
-          for (let y = 0; y < mat.rows; y++) {
-            for (let x = 0; x < mat.cols; x++) {
-              const px = mat.ucharPtr(y, x);
-              const idx = y * mat.cols + x;
-              samples.floatPtr(idx)[0] = px[0]; // R
-              samples.floatPtr(idx)[1] = px[1]; // G
-              samples.floatPtr(idx)[2] = px[2]; // B
-            }
-          }
-          const K = parseInt(colorCountEl.value);
-          let labels = new cv.Mat(), centers = new cv.Mat();
-          cv.kmeans(samples, K, labels,
-            new cv.TermCriteria(cv.TermCriteria_EPS + cv.TermCriteria_MAX_ITER, 10, 1.0),
-            3, cv.KMEANS_RANDOM_CENTERS, centers);
-          centers.convertTo(centers, cv.CV_8U);
+      let polygonsOut = [];
 
-          for (let k = 0; k < K; k++) {
-            let mask = cv.Mat.zeros(mat.rows, mat.cols, cv.CV_8UC1);
-            for (let i = 0; i < labels.rows; i++) if(labels.intAt(i,0)===k) mask.data[i]=255;
-
-            let clusterContours = new cv.MatVector();
-            let clusterHierarchy = new cv.Mat();
-            cv.findContours(mask, clusterContours, clusterHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-            for (let i = 0; i < clusterContours.size(); i++) {
-              const c = clusterContours.get(i);
-              const area = cv.contourArea(c,false);
-              if(area<10 || area>0.95*canvasArea){ c.delete(); continue; }
-              const peri = cv.arcLength(c,true);
-              const eps = Math.max(1, epsPercent*peri);
-              const approx = new cv.Mat();
-              cv.approxPolyDP(c, approx, eps, true);
-
-              let pts = [];
-              for (let j=0;j<approx.rows;j++){
-                const p = approx.data32S.subarray(j*2,j*2+2);
-                pts.push([p[0],p[1]]);
-              }
-              if(pts.length) pts.push(pts[0]);
-
-              const colorRGB=[centers.ucharAt(k,0),centers.ucharAt(k,1),centers.ucharAt(k,2)];
-              polygonsOut.push({pts,color:colorRGB});
-
-              approx.delete(); c.delete();
-            }
-            clusterContours.delete(); clusterHierarchy.delete(); mask.delete();
-          }
-          samples.delete(); labels.delete(); centers.delete();
-        } else {
-          // Mono mode
-          let bestIdx=-1, bestArea=0;
-          for(let i=0;i<contours.size();i++){
-            const c = contours.get(i);
-            const area = cv.contourArea(c,false);
-            if(area>bestArea && area<0.95*canvasArea){ bestArea=area; bestIdx=i; }
-            c.delete();
-          }
-          if(bestIdx>=0){
-            const best=contours.get(bestIdx);
-            const peri=cv.arcLength(best,true);
-            const eps=Math.max(1,epsPercent*peri);
-            const approx=new cv.Mat();
-            cv.approxPolyDP(best, approx, eps,true);
-            let pts=[];
-            for(let j=0;j<approx.rows;j++){
-              const p=approx.data32S.subarray(j*2,j*2+2);
-              pts.push([p[0],p[1]]);
-            }
-            if(pts.length) pts.push(pts[0]);
-            polygonsOut.push({pts,color:'black'});
-            approx.delete(); best.delete();
+      if (colorToggleEl.checked) {
+        // COLOR MODE
+        let samples = new cv.Mat(mat.rows * mat.cols, 3, cv.CV_32F);
+        for (let y = 0; y < mat.rows; y++) {
+          for (let x = 0; x < mat.cols; x++) {
+            const px = mat.ucharPtr(y, x);
+            const idx = y * mat.cols + x;
+            samples.floatPtr(idx)[0] = px[0];
+            samples.floatPtr(idx)[1] = px[1];
+            samples.floatPtr(idx)[2] = px[2];
           }
         }
 
-        gray.delete(); blur.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
-      } catch(e){ console.error(e); }
+        let K = parseInt(colorCountEl.value);
+        let labels = new cv.Mat();
+        let centers = new cv.Mat();
+        cv.kmeans(samples, K, labels,
+          new cv.TermCriteria(cv.TermCriteria_EPS + cv.TermCriteria_MAX_ITER, 10, 1.0),
+          3, cv.KMEANS_RANDOM_CENTERS, centers);
+
+        centers.convertTo(centers, cv.CV_8U);
+
+        for (let k = 0; k < K; k++) {
+          let mask = cv.Mat.zeros(mat.rows, mat.cols, cv.CV_8UC1);
+          for (let i = 0; i < labels.rows; i++) {
+            if (labels.intAt(i, 0) === k) mask.data[i] = 255;
+          }
+
+          let clusterContours = new cv.MatVector();
+          let clusterHierarchy = new cv.Mat();
+          cv.findContours(mask, clusterContours, clusterHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+          for (let i = 0; i < clusterContours.size(); i++) {
+            const c = clusterContours.get(i);
+            const area = cv.contourArea(c, false);
+            if (area < 10 || area > 0.95 * canvasArea) { c.delete(); continue; }
+
+            const peri = cv.arcLength(c, true);
+            const eps = Math.max(1, epsPercent * peri);
+            const approx = new cv.Mat();
+            cv.approxPolyDP(c, approx, eps, true);
+
+            let pts = [];
+            for (let j = 0; j < approx.rows; j++) {
+              const p = approx.data32S.subarray(j * 2, j * 2 + 2);
+              pts.push([p[0], p[1]]);
+            }
+            if (pts.length) pts.push(pts[0]);
+
+            const colorRGB = [
+              centers.ucharAt(k, 0),
+              centers.ucharAt(k, 1),
+              centers.ucharAt(k, 2)
+            ];
+
+            polygonsOut.push({ pts, color: colorRGB });
+            approx.delete(); c.delete();
+          }
+
+          clusterContours.delete();
+          clusterHierarchy.delete();
+          mask.delete();
+        }
+
+        samples.delete(); labels.delete(); centers.delete();
+      } else {
+        // MONO MODE
+        let bestIdx = -1, bestArea = 0;
+        for (let i = 0; i < contours.size(); i++) {
+          const c = contours.get(i);
+          const area = cv.contourArea(c, false);
+          if (area > bestArea && area < 0.95 * canvasArea) { bestArea = area; bestIdx = i; }
+          c.delete();
+        }
+        if (bestIdx >= 0) {
+          const best = contours.get(bestIdx);
+          const peri = cv.arcLength(best, true);
+          const eps = Math.max(1, epsPercent * peri);
+          const approx = new cv.Mat();
+          cv.approxPolyDP(best, approx, eps, true);
+
+          let pts = [];
+          for (let j = 0; j < approx.rows; j++) {
+            const p = approx.data32S.subarray(j * 2, j * 2 + 2);
+            pts.push([p[0], p[1]]);
+          }
+          if (pts.length) pts.push(pts[0]);
+          polygonsOut.push({ pts, color: 'black' });
+
+          approx.delete();
+          best.delete();
+        }
+      }
+
+      gray.delete(); blur.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
       return polygonsOut;
     }
 
-    async function processGIFFrames(frames){
-      const polygonsByFrame=[];
-      for(let f=0; f<frames.length; f++){
-        const frame=frames[f];
-        const imgData=new ImageData(new Uint8ClampedArray(frame.patch), frame.dims.width, frame.dims.height);
-        ctx.putImageData(imgData, 0, 0);
-
-        const mat=cv.imread(canvas);
-        const polygons=processMat(mat);
-        polygonsByFrame.push(polygons);
-        mat.delete();
-
-        if(showPreviewEl.checked){
-          ctx.lineWidth=2;
-          polygons.forEach(poly=>{
-            if(Array.isArray(poly.color)){
-              ctx.strokeStyle=`rgb(${poly.color[0]},${poly.color[1]},${poly.color[2]})`;
-              ctx.fillStyle=`rgba(${poly.color[0]},${poly.color[1]},${poly.color[2]},0.3)`;
-            } else {
-              ctx.strokeStyle=poly.color;
-              ctx.fillStyle=poly.color;
-            }
-            ctx.beginPath();
-            ctx.moveTo(poly.pts[0][0],poly.pts[0][1]);
-            for(let i=1;i<poly.pts.length;i++) ctx.lineTo(poly.pts[i][0],poly.pts[i][1]);
-            ctx.closePath(); ctx.fill(); ctx.stroke();
-          });
+    function polygonsToCode(polygons) {
+      let code = '';
+      polygons.forEach(poly => {
+        if (!poly.pts.length) return;
+        code += 'Polygon(';
+        poly.pts.forEach(([x, y], i) => {
+          code += `${Math.round(x)},${Math.round(y)}${i < poly.pts.length - 1 ? ',' : ''}`;
+        });
+        if (Array.isArray(poly.color)) {
+          code += `, fill='rgb(${poly.color[0]},${poly.color[1]},${poly.color[2]})')\n`;
+        } else {
+          code += `, fill='${poly.color}')\n`;
         }
-      }
-      outputEl.value=`// Processed ${frames.length} frames\n` + JSON.stringify(polygonsByFrame,null,2);
+      });
+      return code;
     }
 
-    document.getElementById('file-input').addEventListener('change', async (e)=>{
-      const file=e.target.files[0];
-      if(!file) return;
-      const arrayBuffer=await file.arrayBuffer();
-      if(file.type==='image/gif'){
-        const gif=gifuct.parseGIF(arrayBuffer);
-        const frames=gifuct.decompressFrames(gif,true);
-        gifFrames=frames;
-        await processGIFFrames(frames);
-      } else {
-        const img=new Image();
-        img.onload=async ()=>{
-          lastImageBitmap=await createImageBitmap(img);
+    async function processImageFile(file) {
+      return new Promise(resolve => {
+        const img = new Image();
+        img.onload = async () => {
+          lastImageBitmap = await createImageBitmap(img);
           drawImageToCanvas(lastImageBitmap);
-          const mat=cv.imread(canvas);
-          const polygons=processMat(mat);
-          drawImageToCanvas(lastImageBitmap);
-          if(showPreviewEl.checked){
-            ctx.lineWidth=2;
-            polygons.forEach(poly=>{
-              if(Array.isArray(poly.color)){
-                ctx.strokeStyle=`rgb(${poly.color[0]},${poly.color[1]},${poly.color[2]})`;
-                ctx.fillStyle=`rgba(${poly.color[0]},${poly.color[1]},${poly.color[2]},0.3)`;
-              } else {
-                ctx.strokeStyle=poly.color;
-                ctx.fillStyle=poly.color;
-              }
-              ctx.beginPath();
-              ctx.moveTo(poly.pts[0][0],poly.pts[0][1]);
-              for(let i=1;i<poly.pts.length;i++) ctx.lineTo(poly.pts[i][0],poly.pts[i][1]);
-              ctx.closePath(); ctx.fill(); ctx.stroke();
-            });
-          }
-          let code='';
-          polygons.forEach(poly=>{
-            if(!poly.pts.length) return;
-            code+='Polygon(';
-            poly.pts.forEach(([x,y],i)=>code+=`${Math.round(x)},${Math.round(y)}${i<poly.pts.length-1?',':''}`);
-            if(Array.isArray(poly.color)) code+=`, fill='rgb(${poly.color[0]},${poly.color[1]},${poly.color[2]})')\n`;
-            else code+=`, fill='${poly.color}')\n`;
-          });
-          outputEl.value=code||'// No polygons detected';
+          const mat = cv.imread(canvas);
+          const polygons = processMat(mat);
+          const code = polygonsToCode(polygons);
           mat.delete();
+          resolve({ polygons, code });
         };
-        img.src=URL.createObjectURL(file);
-      }
+        img.src = URL.createObjectURL(file);
+      });
+    }
+
+    // Single file
+    document.getElementById('file-input').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const { code } = await processImageFile(file);
+      outputEl.value = code || '// No polygons detected';
     });
 
-    processBtn.addEventListener('click', async ()=>{
-      if(gifFrames) await processGIFFrames(gifFrames);
-      else if(lastImageBitmap){
-        drawImageToCanvas(lastImageBitmap);
-        const mat=cv.imread(canvas);
-        const polygons=processMat(mat);
-        drawImageToCanvas(lastImageBitmap);
-        if(showPreviewEl.checked){
-          ctx.lineWidth=2;
-          polygons.forEach(poly=>{
-            if(Array.isArray(poly.color)){
-              ctx.strokeStyle=`rgb(${poly.color[0]},${poly.color[1]},${poly.color[2]})`;
-              ctx.fillStyle=`rgba(${poly.color[0]},${poly.color[1]},${poly.color[2]},0.3)`;
-            } else {
-              ctx.strokeStyle=poly.color;
-              ctx.fillStyle=poly.color;
-            }
-            ctx.beginPath();
-            ctx.moveTo(poly.pts[0][0],poly.pts[0][1]);
-            for(let i=1;i<poly.pts.length;i++) ctx.lineTo(poly.pts[i][0],poly.pts[i][1]);
-            ctx.closePath(); ctx.fill(); ctx.stroke();
-          });
-        }
-        let code='';
-        polygons.forEach(poly=>{
-          if(!poly.pts.length) return;
-          code+='Polygon(';
-          poly.pts.forEach(([x,y],i)=>code+=`${Math.round(x)},${Math.round(y)}${i<poly.pts.length-1?',':''}`);
-          if(Array.isArray(poly.color)) code+=`, fill='rgb(${poly.color[0]},${poly.color[1]},${poly.color[2]})')\n`;
-          else code+=`, fill='${poly.color}')\n`;
-        });
-        outputEl.value=code||'// No polygons detected';
-        mat.delete();
+    // Folder batch
+    document.getElementById('folder-input').addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files).filter(f => /\.png$/i.test(f.name));
+      files.sort((a, b) => a.name.localeCompare(b.name)); // zero-padded safe
+
+      let allCodes = '';
+      for (const file of files) {
+        const { code } = await processImageFile(file);
+        allCodes += `// ${file.name}\n${code || '// No polygons detected'}\n\n`;
       }
+      outputEl.value = allCodes;
     });
 
-    smoothEl.addEventListener('input',()=>{ smoothVal.textContent=`${smoothEl.value}%`; });
-    colorCountEl.addEventListener('input',()=>{ colorCountVal.textContent=colorCountEl.value; });
-    document.getElementById('copy-button').addEventListener('click',()=>{
+    processBtn.addEventListener('click', async () => {
+      if (!lastImageBitmap) return;
+      drawImageToCanvas(lastImageBitmap);
+      const mat = cv.imread(canvas);
+      const polygons = processMat(mat);
+      outputEl.value = polygonsToCode(polygons);
+      mat.delete();
+    });
+
+    smoothEl.addEventListener('input', () => { smoothVal.textContent = `${smoothEl.value}%`; });
+    colorCountEl.addEventListener('input', () => { colorCountVal.textContent = colorCountEl.value; });
+    document.getElementById('copy-button').addEventListener('click', () => {
       outputEl.select(); document.execCommand('copy'); alert('Code copied to clipboard!');
     });
 
-    function onOpenCvReady(){ console.log('OpenCV.js ready'); }
-    if(window.cv) cv['onRuntimeInitialized']=onOpenCvReady;
+    function onOpenCvReady() { console.log('OpenCV.js ready'); }
+    if (window.cv) cv['onRuntimeInitialized'] = onOpenCvReady;
   </script>
 </body>
 </html>
