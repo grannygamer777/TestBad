@@ -80,6 +80,10 @@
 
     let lastImageBitmap = null;
 
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
     function drawImageToCanvas(image) {
       const cw = canvas.width, ch = canvas.height;
       ctx.clearRect(0, 0, cw, ch);
@@ -255,7 +259,7 @@
       outputEl.value = code || '// No polygons detected';
     });
 
-    // Folder batch
+    // Folder batch with 0.04s delay
     document.getElementById('folder-input').addEventListener('change', async (e) => {
       const files = Array.from(e.target.files).filter(f => /\.png$/i.test(f.name));
       files.sort((a, b) => a.name.localeCompare(b.name)); // zero-padded safe
@@ -264,8 +268,9 @@
       for (const file of files) {
         const { code } = await processImageFile(file);
         allCodes += `// ${file.name}\n${code || '// No polygons detected'}\n\n`;
+        outputEl.value = allCodes; // live update
+        await sleep(40); // 0.04 seconds
       }
-      outputEl.value = allCodes;
     });
 
     processBtn.addEventListener('click', async () => {
