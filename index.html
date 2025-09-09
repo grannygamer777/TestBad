@@ -182,7 +182,7 @@
 
         samples.delete(); labels.delete(); centers.delete();
       } else {
-        // MONO MODE
+        // MONO MODE (white background first, then black object)
         let bestIdx = -1, bestArea = 0;
         for (let i = 0; i < contours.size(); i++) {
           const c = contours.get(i);
@@ -203,6 +203,15 @@
             pts.push([p[0], p[1]]);
           }
           if (pts.length) pts.push(pts[0]);
+
+          // White background first
+          let rectPts = [
+            [0,0], [canvas.width,0],
+            [canvas.width,canvas.height], [0,canvas.height], [0,0]
+          ];
+          polygonsOut.push({ pts: rectPts, color: 'white' });
+
+          // Then black object
           polygonsOut.push({ pts, color: 'black' });
 
           approx.delete();
