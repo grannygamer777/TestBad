@@ -1,4 +1,71 @@
-function processMat(mat) {
+‎index.html
++178
+-214
+Lines changed: 178 additions & 214 deletions
+Original file line number	Original file line	Diff line number	Diff line change
+@@ -3,28 +3,30 @@
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Batch Image to CMU Polygon Code</title>
+  <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+  <style>
+    body { display:flex; flex-direction:column; align-items:center; gap:12px; margin:0; padding:16px; background:#f5f5f5; font-family:system-ui, sans-serif; }
+    #row { display:flex; gap:20px; align-items:flex-start; }
+    #canvas { border:1px solid #000; background:#fff; }
+    #controls { display:flex; flex-direction:column; gap:8px; }
+    #output { white-space:pre-wrap; font-family:monospace; width:600px; height:300px; padding:8px; border:1px solid #ccc; background:#fafafa; }
+    label { display:flex; align-items:center; gap:6px; }
+    input[type="range"] { width:240px; }
+    button { padding:8px 12px; cursor:pointer; }
+    .note { font-size:12px; color:#444; }
+  </style>
+</head>
+<body>
+  <h1>Batch Convert Images to CMU Polygon Code</h1>
+
+  <div id="row">
+    <div>
+      <input type="file" id="file-input" accept="image/*" />
+      <br/><br/>
+      <input type="file" id="folder-input" webkitdirectory directory multiple />
+      <label class="note">Select folder (expects 00001.png → 06572.png)</label>
+      <br/>
+      <canvas id="canvas" width="400" height="400"></canvas>
+    </div>
+
+@@ -36,8 +38,8 @@ <h1>Convert Image/GIF to CMU Polygon Code</h1>
+
+      <label>
+        Smoothing (ε = % of perimeter)
+        <input type="range" id="smooth" min="0" max="5" step="0.1" value="0" />
+        <span id="smooth-val">0%</span>
+      </label>
+
+      <label>
+@@ -56,10 +58,10 @@ <h1>Convert Image/GIF to CMU Polygon Code</h1>
+        <span id="color-count-val">8</span>
+      </label>
+
+      <button id="process">Reprocess Current</button>
+      <textarea id="output" readonly></textarea>
+      <button id="copy-button">Copy Code</button>
+      <div class="note">Mono mode = black silhouette. Color mode = vectorized color clusters.</div>
+    </div>
+  </div>
+
+@@ -76,8 +78,7 @@ <h1>Convert Image/GIF to CMU Polygon Code</h1>
+    const colorCountVal = document.getElementById('color-count-val');
+    const processBtn = document.getElementById('process');
+
+    let lastImageBitmap = null;
+
+    function drawImageToCanvas(image) {
+      const cw = canvas.width, ch = canvas.height;
+@@ -94,233 +95,196 @@ <h1>Convert Image/GIF to CMU Polygon Code</h1>
+    }
+
+   function processMat(mat) {
   const gray = new cv.Mat();
   cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
 
@@ -156,3 +223,57 @@ function polygonsToCode(polygons) {
   });
   return code;
 }
+    async function processImageFile(file) {
+      return new Promise(resolve => {
+        const img = new Image();
+        img.onload = async () => {
+          lastImageBitmap = await createImageBitmap(img);
+          drawImageToCanvas(lastImageBitmap);
+          const mat = cv.imread(canvas);
+          const polygons = processMat(mat);
+          const code = polygonsToCode(polygons);
+          mat.delete();
+          resolve({ polygons, code });
+        };
+        img.src = URL.createObjectURL(file);
+      });
+    }
+    // Single file
+    document.getElementById('file-input').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const { code } = await processImageFile(file);
+      outputEl.value = code || '// No polygons detected';
+    });
+
+    // Folder batch
+    document.getElementById('folder-input').addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files).filter(f => /\.png$/i.test(f.name));
+      files.sort((a, b) => a.name.localeCompare(b.name)); // zero-padded safe
+      let allCodes = '';
+      for (const file of files) {
+        const { code } = await processImageFile(file);
+        allCodes += `// ${file.name}\n${code || '// No polygons detected'}\n\n`;
+      }
+      outputEl.value = allCodes;
+    });
+    processBtn.addEventListener('click', async () => {
+      if (!lastImageBitmap) return;
+      drawImageToCanvas(lastImageBitmap);
+      const mat = cv.imread(canvas);
+      const polygons = processMat(mat);
+      outputEl.value = polygonsToCode(polygons);
+      mat.delete();
+    });
+
+    smoothEl.addEventListener('input', () => { smoothVal.textContent = `${smoothEl.value}%`; });
+    colorCountEl.addEventListener('input', () => { colorCountVal.textContent = colorCountEl.value; });
+    document.getElementById('copy-button').addEventListener('click', () => {
+      outputEl.select(); document.execCommand('copy'); alert('Code copied to clipboard!');
+    });
+
+    function onOpenCvReady() { console.log('OpenCV.js ready'); }
+    if (window.cv) cv['onRuntimeInitialized'] = onOpenCvReady;
+  </script>
+</body>
+</html>
