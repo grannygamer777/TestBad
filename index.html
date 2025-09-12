@@ -1,35 +1,34 @@
+@@ -1,303 +1,158 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Batch Image to CMU Polygon Code — Optimized</title>
+  <title>Batch Image to CMU Polygon Code</title>
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
   <style>
     body { display:flex; flex-direction:column; align-items:center; gap:12px; margin:0; padding:16px; background:#f5f5f5; font-family:system-ui, sans-serif; }
     #row { display:flex; gap:20px; align-items:flex-start; }
     #canvas { border:1px solid #000; background:#fff; }
     #controls { display:flex; flex-direction:column; gap:8px; }
-    #output { white-space:pre-wrap; font-family:monospace; width:780px; height:380px; padding:8px; border:1px solid #ccc; background:#fafafa; overflow:auto; }
+    #output { white-space:pre-wrap; font-family:monospace; width:600px; height:300px; padding:8px; border:1px solid #ccc; background:#fafafa; }
     label { display:flex; align-items:center; gap:6px; }
     input[type="range"] { width:240px; }
     button { padding:8px 12px; cursor:pointer; }
     .note { font-size:12px; color:#444; }
-    .small { font-size:12px; color:#666; }
   </style>
 </head>
 <body>
-  <h1>Batch Convert Images to CMU Polygon Code — Optimized</h1>
+  <h1>Batch Convert Images to CMU Polygon Code</h1>
 
   <div id="row">
     <div>
       <input type="file" id="file-input" accept="image/*" />
       <br/><br/>
       <input type="file" id="folder-input" webkitdirectory directory multiple />
-      <label class="note">Select folder (expects zero-padded names like 00001.png → 06572.png)</label>
+      <label class="note">Select folder (expects 00001.png → 06572.png)</label>
       <br/>
       <canvas id="canvas" width="400" height="400"></canvas>
-      <div class="small">Preview shows scaled image to canvas size (400×400).</div>
     </div>
 
     <div id="controls">
@@ -60,17 +59,10 @@
         <span id="color-count-val">8</span>
       </label>
 
-      <label>
-        <input type="checkbox" id="optimize-toggle" />
-        Optimized (minify variables, reuse across frames)
-      </label>
-
-      <div class="small">Optimized mode does a two-pass batch: it collects unique points/colors across all frames, assigns short variables, defines colors once, initializes points for frame 1, then for each subsequent frame only writes changed point assignments — huge savings for animations.</div>
-
       <button id="process">Reprocess Current</button>
       <textarea id="output" readonly></textarea>
       <button id="copy-button">Copy Code</button>
-      <div class="note">Mono = black silhouette. Color = vectorized clusters. Optimized = global var reuse across frames (best for animations).</div>
+      <div class="note">Mono mode = black silhouette. Color mode = vectorized color clusters.</div>
     </div>
   </div>
 
@@ -85,11 +77,7 @@
     const colorToggleEl = document.getElementById('color-toggle');
     const colorCountEl = document.getElementById('color-count');
     const colorCountVal = document.getElementById('color-count-val');
-    const optimizeEl = document.getElementById('optimize-toggle');
     const processBtn = document.getElementById('process');
-    const fileInput = document.getElementById('file-input');
-    const folderInput = document.getElementById('folder-input');
-    const copyBtn = document.getElementById('copy-button');
 
     let lastImageBitmap = null;
 
@@ -105,18 +93,6 @@
       const ox = Math.floor((cw - w) / 2), oy = Math.floor((ch - h) / 2);
       ctx.drawImage(image, ox, oy, w, h);
       return { ox, oy, w, h };
-    }
-
-    // Remove repeated closing point if equal to first
-    function normalizePts(pts) {
-      if (!pts || pts.length === 0) return [];
-      // remove trailing identical last point
-      const last = pts[pts.length - 1];
-      const first = pts[0];
-      if (pts.length > 1 && last[0] === first[0] && last[1] === first[1]) {
-        return pts.slice(0, pts.length - 1);
-      }
-      return pts;
     }
 
     function processMat(mat) {
@@ -142,7 +118,7 @@
       let polygonsOut = [];
 
       if (colorToggleEl.checked) {
-        // COLOR MODE (per-frame clustering)
+        // COLOR MODE
         let samples = new cv.Mat(mat.rows * mat.cols, 3, cv.CV_32F);
         for (let y = 0; y < mat.rows; y++) {
           for (let x = 0; x < mat.cols; x++) {
@@ -188,8 +164,7 @@
               const p = approx.data32S.subarray(j * 2, j * 2 + 2);
               pts.push([p[0], p[1]]);
             }
-            pts = normalizePts(pts);
-            if (pts.length < 3) { approx.delete(); c.delete(); continue; }
+            if (pts.length) pts.push(pts[0]);
 
             const colorRGB = [
               centers.ucharAt(k, 0),
@@ -201,6 +176,7 @@
             approx.delete(); c.delete();
           }
 
+
           clusterContours.delete();
           clusterHierarchy.delete();
           mask.delete();
@@ -208,7 +184,7 @@
 
         samples.delete(); labels.delete(); centers.delete();
       } else {
-        // MONO MODE (white bg + black object)
+        // MONO MODE (white background first, then black object)
         let bestIdx = -1, bestArea = 0;
         for (let i = 0; i < contours.size(); i++) {
           const c = contours.get(i);
@@ -228,16 +204,18 @@
             const p = approx.data32S.subarray(j * 2, j * 2 + 2);
             pts.push([p[0], p[1]]);
           }
-          pts = normalizePts(pts);
-          if (pts.length >= 3) {
-            // White background rectangle first, then foreground polygon
-            let rectPts = [
-              [0,0], [canvas.width,0],
-              [canvas.width,canvas.height], [0,canvas.height]
-            ];
-            polygonsOut.push({ pts: rectPts, color: 'white' });
-            polygonsOut.push({ pts, color: 'black' });
-          }
+          if (pts.length) pts.push(pts[0]);
+
+          // White background first
+          let rectPts = [
+            [0,0], [canvas.width,0],
+            [canvas.width,canvas.height], [0,canvas.height], [0,0]
+          ];
+          polygonsOut.push({ pts: rectPts, color: 'white' });
+
+          // Then black object
+          polygonsOut.push({ pts, color: 'black' });
+
 
           approx.delete();
           best.delete();
@@ -246,10 +224,10 @@
 
       gray.delete(); blur.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
       return polygonsOut;
+
     }
 
-    // Standard (non-optimized) polygon -> code
-    function polygonsToCodeSimple(polygons) {
+    function polygonsToCode(polygons) {
       let code = '';
       polygons.forEach(poly => {
         if (!poly.pts.length) return;
@@ -258,7 +236,7 @@
           code += `${Math.round(x)},${Math.round(y)}${i < poly.pts.length - 1 ? ',' : ''}`;
         });
         if (Array.isArray(poly.color)) {
-          code += `, fill=rgb(${poly.color[0]},${poly.color[1]},${poly.color[2]}))\n`;
+          code += `, fill='rgb(${poly.color[0]},${poly.color[1]},${poly.color[2]})')\n`;
         } else {
           code += `, fill='${poly.color}')\n`;
         }
@@ -266,154 +244,19 @@
       return code;
     }
 
-    // Build optimized code for a set of frames (framesPolygons is array of polygons[] per frame)
-    function buildOptimizedCode(framesPolygons) {
-      // 1) collect unique colors across all frames
-      const colorKey = c => Array.isArray(c) ? `rgb(${c[0]},${c[1]},${c[2]})` : c;
-      const colorSet = new Map();
-      let cidx = 1;
-      framesPolygons.forEach(frame => {
-        frame.forEach(poly => {
-          const k = colorKey(poly.color);
-          if (!colorSet.has(k)) {
-            colorSet.set(k, `c${cidx++}`);
-          }
-        });
-      });
 
-      // 2) collect unique points across all polygons/frames (rounded)
-      // map 'x:y' -> var index
-      const ptMap = new Map(); // "x,y" -> idx
-      let pidx = 1;
-      framesPolygons.forEach(frame => {
-        frame.forEach(poly => {
-          poly.pts.forEach(([x,y]) => {
-            const rx = Math.round(x), ry = Math.round(y);
-            const key = `${rx},${ry}`;
-            if (!ptMap.has(key)) {
-              ptMap.set(key, pidx++);
-            }
-          });
-        });
-      });
 
-      // Limit sanity: if too many unique points, we'll still proceed (user expects heavy frames).
-      // 3) assign variable names
-      // x1,y1 correspond to pt index 1, x2,y2 to pt index 2, ...
-      const totalPts = pidx - 1;
-      const totalColors = cidx - 1;
 
-      // 4) produce header: colors as c1='rgb(...)'; c2='white'; ...
-      let out = '';
-      if (totalColors > 0) {
-        const cols = [];
-        for (const [k, v] of colorSet.entries()) {
-          cols.push(`${v}='${k}'`);
-        }
-        out += cols.join('; ') + ';\n';
-      }
 
-      // 5) Create an array to map pt index -> current value to detect changes
-      // We'll output initial assignments for frame 0, then diffs for each subsequent frame.
-      // Build inverse map: ptIndex -> "xN,yN" var names
-      const ptIndexToVar = new Map(); // 1 -> { x:'x1', y:'y1', key:'200,300' }
-      for (const [key, idx] of ptMap.entries()) {
-        ptIndexToVar.set(idx, { key, xv: `x${idx}`, yv: `y${idx}` });
-      }
 
-      // Utility to write assignments compactly: x1=200; y1=300;
-      function writeAssign(obj) {
-        // obj: [{xv, yv, xval, yval}, ...]
-        return obj.map(o => `${o.xv}=${o.xval};${o.yv}=${o.yval}`).join('; ') + ';';
-      }
 
-      // Build polygon references that use x/y var names
-      function polyToRef(poly) {
-        const keys = poly.pts.map(([x,y]) => {
-          const k = `${Math.round(x)},${Math.round(y)}`;
-          const idx = ptMap.get(k);
-          const v = ptIndexToVar.get(idx);
-          return `${v.xv},${v.yv}`;
-        });
-        const ck = colorKey(poly.color);
-        const cvar = colorSet.get(ck) || `'${ck}'`;
-        return `Polygon(${keys.join(',')}, fill=${cvar})`;
-      }
 
-      // Initial values: take first frame
-      if (!framesPolygons.length) return '// no frames';
-      const firstFrame = framesPolygons[0];
 
-      // Build initial assignments for all points used in firstFrame (we don't write all global points at start,
-      // only those that appear in the first frame — points that appear later will be assigned when needed)
-      const initialAssigns = [];
-      // Track current values (map var name -> {x,y})
-      const currentVals = new Map();
-      // We'll also track which pt indices have been assigned at least once
-      const assignedIdx = new Set();
 
-      firstFrame.forEach(poly => {
-        poly.pts.forEach(([x,y]) => {
-          const rx = Math.round(x), ry = Math.round(y);
-          const key = `${rx},${ry}`;
-          const idx = ptMap.get(key);
-          const { xv, yv } = ptIndexToVar.get(idx);
-          if (!assignedIdx.has(idx)) {
-            initialAssigns.push({ xv, yv, xval: rx, yval: ry });
-            currentVals.set(idx, { x: rx, y: ry });
-            assignedIdx.add(idx);
-          }
-        });
-      });
 
-      if (initialAssigns.length) {
-        out += writeAssign(initialAssigns) + '\n';
-      }
 
-      // Output polygons for first frame
-      const framePolys = firstFrame.map(poly => polyToRef(poly));
-      out += framePolys.join('\n') + ';\n'; // semicolon at end for clarity
-      out += 'sleep(0.04);\n';
 
-      // For remaining frames: compute diffs only for variables that change
-      for (let f = 1; f < framesPolygons.length; f++) {
-        const frame = framesPolygons[f];
-        // collect assignments needed this frame
-        const assigns = [];
-        frame.forEach(poly => {
-          poly.pts.forEach(([x,y]) => {
-            const rx = Math.round(x), ry = Math.round(y);
-            const key = `${rx},${ry}`;
-            const idx = ptMap.get(key);
-            const { xv, yv } = ptIndexToVar.get(idx);
-            const prev = currentVals.get(idx);
-            if (!prev || prev.x !== rx || prev.y !== ry) {
-              assigns.push({ xv, yv, xval: rx, yval: ry });
-              currentVals.set(idx, { x: rx, y: ry });
-              assignedIdx.add(idx);
-            }
-          });
-        });
 
-        if (assigns.length) {
-          out += writeAssign(assigns) + '\n';
-        } else {
-          // nothing changed — we can optionally put a no-op comment
-          // out += "// no point changes\n";
-        }
-
-        // polygons
-        const polys = frame.map(poly => polyToRef(poly));
-        out += polys.join('\n') + ';\n';
-        out += 'sleep(0.04);\n';
-      }
-
-      // Final note: to keep output compact, we didn't reassign points not used yet until they appear.
-      // Return output string
-      return out;
-    }
-
-    // Process a single image file and return polygons
     async function processImageFile(file) {
       return new Promise(resolve => {
         const img = new Image();
@@ -422,86 +265,52 @@
           drawImageToCanvas(lastImageBitmap);
           const mat = cv.imread(canvas);
           const polygons = processMat(mat);
+          const code = polygonsToCode(polygons);
           mat.delete();
-          resolve({ polygons });
+          resolve({ polygons, code });
         };
         img.src = URL.createObjectURL(file);
       });
     }
 
-    // Handler for single file (non-batch)
-    fileInput.addEventListener('change', async (e) => {
+    // Single file
+    document.getElementById('file-input').addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      outputEl.value = '// processing...';
-      const { polygons } = await processImageFile(file);
-      if (!optimizeEl.checked) {
-        outputEl.value = polygonsToCodeSimple(polygons) || '// No polygons detected';
-      } else {
-        // optimized single-frame: still create point/color vars but only one frame
-        const code = buildOptimizedCode([polygons]);
-        outputEl.value = code || '// No polygons detected';
-      }
+      const { code } = await processImageFile(file);
+      outputEl.value = code || '// No polygons detected';
     });
 
-    // Handler for folder batch — two-pass optimization when optimizeEl.checked
-    folderInput.addEventListener('change', async (e) => {
-      const files = Array.from(e.target.files).filter(f => /\.(png|jpg|jpeg)$/i.test(f.name));
-      files.sort((a,b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
-      if (!files.length) return;
-      outputEl.value = '// processing frames — this may take a while for many frames...';
+    // Folder batch
+    document.getElementById('folder-input').addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files).filter(f => /\.png$/i.test(f.name));
+      files.sort((a, b) => a.name.localeCompare(b.name)); // zero-padded safe
 
-      // process sequentially and collect polygons for every frame
-      const framesPolygons = [];
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const { polygons } = await processImageFile(file);
-        framesPolygons.push(polygons);
-        // quick preview of progress
-        outputEl.value = `// processed ${i+1}/${files.length} frames...`;
+      let allCodes = '';
+      for (const file of files) {
+        const { code } = await processImageFile(file);
+        if (code) {
+          allCodes += `${code}sleep(0.04)\n`;
+        } else {
+          allCodes += `// No polygons detected\nsleep(0.04)\n`;
+        }
       }
-
-      // If not optimized -> simple concatenation with sleep
-      if (!optimizeEl.checked) {
-        let allCodes = '';
-        framesPolygons.forEach((polys, idx) => {
-          const code = polygonsToCodeSimple(polys) || '// No polygons detected';
-          allCodes += code + 'sleep(0.04)\n';
-        });
-        outputEl.value = allCodes;
-        return;
-      }
-
-      // Optimized: build two-pass aggregated output
-      const code = buildOptimizedCode(framesPolygons);
-      outputEl.value = code;
+      outputEl.value = allCodes;
     });
 
     processBtn.addEventListener('click', async () => {
       if (!lastImageBitmap) return;
-      const imgBitmap = lastImageBitmap;
-      drawImageToCanvas(imgBitmap);
+      drawImageToCanvas(lastImageBitmap);
       const mat = cv.imread(canvas);
       const polygons = processMat(mat);
+      outputEl.value = polygonsToCode(polygons);
       mat.delete();
-      if (!optimizeEl.checked) {
-        outputEl.value = polygonsToCodeSimple(polygons) || '// No polygons detected';
-      } else {
-        outputEl.value = buildOptimizedCode([polygons]) || '// No polygons detected';
-      }
     });
 
     smoothEl.addEventListener('input', () => { smoothVal.textContent = `${smoothEl.value}%`; });
     colorCountEl.addEventListener('input', () => { colorCountVal.textContent = colorCountEl.value; });
-
-    copyBtn.addEventListener('click', () => {
-      outputEl.select();
-      try {
-        document.execCommand('copy');
-        alert('Code copied to clipboard!');
-      } catch (err) {
-        alert('Copy failed — select the output and press Ctrl+C.');
-      }
+    document.getElementById('copy-button').addEventListener('click', () => {
+      outputEl.select(); document.execCommand('copy'); alert('Code copied to clipboard!');
     });
 
     function onOpenCvReady() { console.log('OpenCV.js ready'); }
