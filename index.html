@@ -1,3 +1,6 @@
+@@ -1,303 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
@@ -28,7 +31,11 @@
       <canvas id="canvas" width="400" height="400"></canvas>
     </div>
 
-@@ -36,8 +38,8 @@ <h1>Convert Image/GIF to CMU Polygon Code</h1>
+    <div id="controls">
+      <label>
+        <input type="checkbox" id="invert-toggle" checked />
+        Treat BLACK shapes as foreground (invert)
+      </label>
 
       <label>
         Smoothing (ε = % of perimeter)
@@ -37,7 +44,18 @@
       </label>
 
       <label>
-@@ -56,10 +58,10 @@ <h1>Convert Image/GIF to CMU Polygon Code</h1>
+        <input type="checkbox" id="show-preview" checked />
+        Draw polygon preview
+      </label>
+
+      <label>
+        <input type="checkbox" id="color-toggle" />
+        Enable Color Mode (multi-color quantization)
+      </label>
+
+      <label>
+        Number of colors:
+        <input type="range" id="color-count" min="2" max="16" value="8" />
         <span id="color-count-val">8</span>
       </label>
 
@@ -48,7 +66,16 @@
     </div>
   </div>
 
-@@ -76,8 +78,7 @@ <h1>Convert Image/GIF to CMU Polygon Code</h1>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const outputEl = document.getElementById('output');
+    const invertEl = document.getElementById('invert-toggle');
+    const smoothEl = document.getElementById('smooth');
+    const smoothVal = document.getElementById('smooth-val');
+    const showPreviewEl = document.getElementById('show-preview');
+    const colorToggleEl = document.getElementById('color-toggle');
+    const colorCountEl = document.getElementById('color-count');
     const colorCountVal = document.getElementById('color-count-val');
     const processBtn = document.getElementById('process');
 
@@ -56,167 +83,180 @@
 
     function drawImageToCanvas(image) {
       const cw = canvas.width, ch = canvas.height;
-@@ -94,233 +95,196 @@ <h1>Convert Image/GIF to CMU Polygon Code</h1>
+      ctx.clearRect(0, 0, cw, ch);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, cw, ch);
+
+      const iw = image.width, ih = image.height;
+      const scale = Math.min(cw / iw, ch / ih);
+      const w = Math.round(iw * scale), h = Math.round(ih * scale);
+      const ox = Math.floor((cw - w) / 2), oy = Math.floor((ch - h) / 2);
+      ctx.drawImage(image, ox, oy, w, h);
+      return { ox, oy, w, h };
     }
 
-   function processMat(mat) {
-  const gray = new cv.Mat();
-  cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
+    function processMat(mat) {
+      const gray = new cv.Mat();
+      cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
 
-  const blur = new cv.Mat();
-  cv.GaussianBlur(gray, blur, new cv.Size(3,3), 0);
+      const blur = new cv.Mat();
+      cv.GaussianBlur(gray, blur, new cv.Size(3,3), 0);
 
-  const thresh = new cv.Mat();
-  const useInvert = invertEl.checked;
-  const mode = useInvert ? cv.THRESH_BINARY_INV | cv.THRESH_OTSU
-                         : cv.THRESH_BINARY     | cv.THRESH_OTSU;
-  cv.threshold(blur, thresh, 0, 255, mode);
+      const thresh = new cv.Mat();
+      const useInvert = invertEl.checked;
+      const mode = useInvert ? cv.THRESH_BINARY_INV | cv.THRESH_OTSU
+                             : cv.THRESH_BINARY     | cv.THRESH_OTSU;
+      cv.threshold(blur, thresh, 0, 255, mode);
 
-  const contours = new cv.MatVector();
-  const hierarchy = new cv.Mat();
-  cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      const contours = new cv.MatVector();
+      const hierarchy = new cv.Mat();
+      cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-  const canvasArea = canvas.width * canvas.height;
-  const epsPercent = parseFloat(smoothEl.value) / 100;
+      const canvasArea = canvas.width * canvas.height;
+      const epsPercent = parseFloat(smoothEl.value) / 100;
 
-  let polygonsOut = [];
+      let polygonsOut = [];
 
-  // Helper to compute brightness (perceived luminance)
-  function getBrightness(colorRGB) {
-    return 0.299*colorRGB[0] + 0.587*colorRGB[1] + 0.114*colorRGB[2];
-  }
-
-  if (colorToggleEl.checked) {
-    // COLOR MODE
-    let samples = new cv.Mat(mat.rows * mat.cols, 3, cv.CV_32F);
-    for (let y = 0; y < mat.rows; y++) {
-      for (let x = 0; x < mat.cols; x++) {
-        const px = mat.ucharPtr(y, x);
-        const idx = y * mat.cols + x;
-        samples.floatPtr(idx)[0] = px[0];
-        samples.floatPtr(idx)[1] = px[1];
-        samples.floatPtr(idx)[2] = px[2];
-      }
-    }
-
-    let K = parseInt(colorCountEl.value);
-    let labels = new cv.Mat();
-    let centers = new cv.Mat();
-    cv.kmeans(samples, K, labels,
-      new cv.TermCriteria(cv.TermCriteria_EPS + cv.TermCriteria_MAX_ITER, 10, 1.0),
-      3, cv.KMEANS_RANDOM_CENTERS, centers);
-
-    centers.convertTo(centers, cv.CV_8U);
-
-    for (let k = 0; k < K; k++) {
-      let mask = cv.Mat.zeros(mat.rows, mat.cols, cv.CV_8UC1);
-      for (let i = 0; i < labels.rows; i++) {
-        if (labels.intAt(i, 0) === k) mask.data[i] = 255;
-      }
-
-      let clusterContours = new cv.MatVector();
-      let clusterHierarchy = new cv.Mat();
-      cv.findContours(mask, clusterContours, clusterHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-      for (let i = 0; i < clusterContours.size(); i++) {
-        const c = clusterContours.get(i);
-        const area = cv.contourArea(c, false);
-        if (area < 10 || area > 0.95 * canvasArea) { c.delete(); continue; }
-
-        const peri = cv.arcLength(c, true);
-        const eps = Math.max(1, epsPercent * peri);
-        const approx = new cv.Mat();
-        cv.approxPolyDP(c, approx, eps, true);
-
-        let pts = [];
-        for (let j = 0; j < approx.rows; j++) {
-          const p = approx.data32S.subarray(j * 2, j * 2 + 2);
-          pts.push([p[0], p[1]]);
+      if (colorToggleEl.checked) {
+        // COLOR MODE
+        let samples = new cv.Mat(mat.rows * mat.cols, 3, cv.CV_32F);
+        for (let y = 0; y < mat.rows; y++) {
+          for (let x = 0; x < mat.cols; x++) {
+            const px = mat.ucharPtr(y, x);
+            const idx = y * mat.cols + x;
+            samples.floatPtr(idx)[0] = px[0];
+            samples.floatPtr(idx)[1] = px[1];
+            samples.floatPtr(idx)[2] = px[2];
+          }
         }
-        if (pts.length) pts.push(pts[0]);
 
-        const colorRGB = [
-          centers.ucharAt(k, 0),
-          centers.ucharAt(k, 1),
-          centers.ucharAt(k, 2)
-        ];
+        let K = parseInt(colorCountEl.value);
+        let labels = new cv.Mat();
+        let centers = new cv.Mat();
+        cv.kmeans(samples, K, labels,
+          new cv.TermCriteria(cv.TermCriteria_EPS + cv.TermCriteria_MAX_ITER, 10, 1.0),
+          3, cv.KMEANS_RANDOM_CENTERS, centers);
 
-        // Assign layer based on brightness (light = background = 0, dark = foreground = 1)
-        const brightness = getBrightness(colorRGB);
-        const layer = brightness > 200 ? 0 : 1;
+        centers.convertTo(centers, cv.CV_8U);
 
-        polygonsOut.push({ pts, color: colorRGB, layer });
-        approx.delete(); c.delete();
+        for (let k = 0; k < K; k++) {
+          let mask = cv.Mat.zeros(mat.rows, mat.cols, cv.CV_8UC1);
+          for (let i = 0; i < labels.rows; i++) {
+            if (labels.intAt(i, 0) === k) mask.data[i] = 255;
+          }
+
+          let clusterContours = new cv.MatVector();
+          let clusterHierarchy = new cv.Mat();
+          cv.findContours(mask, clusterContours, clusterHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+          for (let i = 0; i < clusterContours.size(); i++) {
+            const c = clusterContours.get(i);
+            const area = cv.contourArea(c, false);
+            if (area < 10 || area > 0.95 * canvasArea) { c.delete(); continue; }
+
+            const peri = cv.arcLength(c, true);
+            const eps = Math.max(1, epsPercent * peri);
+            const approx = new cv.Mat();
+            cv.approxPolyDP(c, approx, eps, true);
+
+            let pts = [];
+            for (let j = 0; j < approx.rows; j++) {
+              const p = approx.data32S.subarray(j * 2, j * 2 + 2);
+              pts.push([p[0], p[1]]);
+            }
+            if (pts.length) pts.push(pts[0]);
+
+            const colorRGB = [
+              centers.ucharAt(k, 0),
+              centers.ucharAt(k, 1),
+              centers.ucharAt(k, 2)
+            ];
+
+            polygonsOut.push({ pts, color: colorRGB });
+            approx.delete(); c.delete();
+          }
+
+
+          clusterContours.delete();
+          clusterHierarchy.delete();
+          mask.delete();
+        }
+
+        samples.delete(); labels.delete(); centers.delete();
+      } else {
+        // MONO MODE (white background first, then black object)
+        let bestIdx = -1, bestArea = 0;
+        for (let i = 0; i < contours.size(); i++) {
+          const c = contours.get(i);
+          const area = cv.contourArea(c, false);
+          if (area > bestArea && area < 0.95 * canvasArea) { bestArea = area; bestIdx = i; }
+          c.delete();
+        }
+        if (bestIdx >= 0) {
+          const best = contours.get(bestIdx);
+          const peri = cv.arcLength(best, true);
+          const eps = Math.max(1, epsPercent * peri);
+          const approx = new cv.Mat();
+          cv.approxPolyDP(best, approx, eps, true);
+
+          let pts = [];
+          for (let j = 0; j < approx.rows; j++) {
+            const p = approx.data32S.subarray(j * 2, j * 2 + 2);
+            pts.push([p[0], p[1]]);
+          }
+          if (pts.length) pts.push(pts[0]);
+
+          // White background first
+          let rectPts = [
+            [0,0], [canvas.width,0],
+            [canvas.width,canvas.height], [0,canvas.height], [0,0]
+          ];
+          polygonsOut.push({ pts: rectPts, color: 'white' });
+
+          // Then black object
+          polygonsOut.push({ pts, color: 'black' });
+
+
+          approx.delete();
+          best.delete();
+        }
       }
 
-      clusterContours.delete();
-      clusterHierarchy.delete();
-      mask.delete();
+      gray.delete(); blur.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+      return polygonsOut;
+
     }
 
-    samples.delete(); labels.delete(); centers.delete();
-  } else {
-    // MONO MODE (white background first, then black object)
-    let bestIdx = -1, bestArea = 0;
-    for (let i = 0; i < contours.size(); i++) {
-      const c = contours.get(i);
-      const area = cv.contourArea(c, false);
-      if (area > bestArea && area < 0.95 * canvasArea) { bestArea = area; bestIdx = i; }
-      c.delete();
+    function polygonsToCode(polygons) {
+      let code = '';
+      polygons.forEach(poly => {
+        if (!poly.pts.length) return;
+        code += 'Polygon(';
+        poly.pts.forEach(([x, y], i) => {
+          code += `${Math.round(x)},${Math.round(y)}${i < poly.pts.length - 1 ? ',' : ''}`;
+        });
+        if (Array.isArray(poly.color)) {
+          code += `, fill='rgb(${poly.color[0]},${poly.color[1]},${poly.color[2]})')\n`;
+        } else {
+          code += `, fill='${poly.color}')\n`;
+        }
+      });
+      return code;
     }
-    if (bestIdx >= 0) {
-      const best = contours.get(bestIdx);
-      const peri = cv.arcLength(best, true);
-      const eps = Math.max(1, epsPercent * peri);
-      const approx = new cv.Mat();
-      cv.approxPolyDP(best, approx, eps, true);
 
-      let pts = [];
-      for (let j = 0; j < approx.rows; j++) {
-        const p = approx.data32S.subarray(j * 2, j * 2 + 2);
-        pts.push([p[0], p[1]]);
-      }
-      if (pts.length) pts.push(pts[0]);
 
-      // White background first, layer 0
-      let rectPts = [
-        [0,0], [canvas.width,0],
-        [canvas.width,canvas.height], [0,canvas.height], [0,0]
-      ];
-      polygonsOut.push({ pts: rectPts, color: 'white', layer: 0 });
 
-      // Then black object, layer 1
-      polygonsOut.push({ pts, color: 'black', layer: 1 });
 
-      approx.delete();
-      best.delete();
-    }
-  }
 
-  gray.delete(); blur.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
 
-  // Sort polygons so that background layers come first
-  polygonsOut.sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
 
-  return polygonsOut;
-}
 
-function polygonsToCode(polygons) {
-  let code = '';
-  polygons.forEach(poly => {
-    if (!poly.pts.length) return;
-    code += 'Polygon(';
-    poly.pts.forEach(([x, y], i) => {
-      code += `${Math.round(x)},${Math.round(y)}${i < poly.pts.length - 1 ? ',' : ''}`;
-    });
-    if (Array.isArray(poly.color)) {
-      code += `, fill='rgb(${poly.color[0]},${poly.color[1]},${poly.color[2]})')\n`;
-    } else {
-      code += `, fill='${poly.color}')\n`;
-    }
-  });
-  return code;
-}
+
+
+
+
+
+
     async function processImageFile(file) {
       return new Promise(resolve => {
         const img = new Image();
@@ -232,6 +272,7 @@ function polygonsToCode(polygons) {
         img.src = URL.createObjectURL(file);
       });
     }
+
     // Single file
     document.getElementById('file-input').addEventListener('change', async (e) => {
       const file = e.target.files[0];
@@ -244,13 +285,19 @@ function polygonsToCode(polygons) {
     document.getElementById('folder-input').addEventListener('change', async (e) => {
       const files = Array.from(e.target.files).filter(f => /\.png$/i.test(f.name));
       files.sort((a, b) => a.name.localeCompare(b.name)); // zero-padded safe
+
       let allCodes = '';
       for (const file of files) {
         const { code } = await processImageFile(file);
-        allCodes += `// ${file.name}\n${code || '// No polygons detected'}\n\n`;
+        if (code) {
+          allCodes += `${code}sleep(0.04)\n`;
+        } else {
+          allCodes += `// No polygons detected\nsleep(0.04)\n`;
+        }
       }
       outputEl.value = allCodes;
     });
+
     processBtn.addEventListener('click', async () => {
       if (!lastImageBitmap) return;
       drawImageToCanvas(lastImageBitmap);
@@ -271,3 +318,4 @@ function polygonsToCode(polygons) {
   </script>
 </body>
 </html>
+
