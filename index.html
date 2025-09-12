@@ -258,7 +258,7 @@
           code += `${Math.round(x)},${Math.round(y)}${i < poly.pts.length - 1 ? ',' : ''}`;
         });
         if (Array.isArray(poly.color)) {
-          code += `, fill='rgb(${poly.color[0]},${poly.color[1]},${poly.color[2]})')\n`;
+          code += `, fill=rgb(${poly.color[0]},${poly.color[1]},${poly.color[2]}))\n`;
         } else {
           code += `, fill='${poly.color}')\n`;
         }
