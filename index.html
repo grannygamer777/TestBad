@@ -49,6 +49,7 @@ async function processImageFile(file){
     img.onload = async ()=>{
       ctx.clearRect(0,0,canvas.width,canvas.height);
       ctx.drawImage(img,0,0,canvas.width,canvas.height);
+
       const mat = cv.imread(canvas);
       const gray = new cv.Mat();
       cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
@@ -74,12 +75,22 @@ async function processImageFile(file){
         }
       }
 
+      // Encode deltas
       let deltas = encodeDeltas(pts);
 
+      // Decode to absolute points for CMU
+      let absPts = decodeDeltas(deltas).flat();
+
+      // Clean up
       mat.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete(); 
       if(best) best.delete();
 
-      resolve({deltas});
+      // Return CMU-ready frame
+      resolve({
+        frame: [
+          { points: absPts, fill: "black" }
+        ]
+      });
     };
     img.src = URL.createObjectURL(file);
   });
@@ -87,14 +98,17 @@ async function processImageFile(file){
 
 // Batch processing
 document.getElementById('folder-input').addEventListener('change', async e=>{
-  const files = Array.from(e.target.files).filter(f=>f.name.endsWith('.png')).sort((a,b)=>a.name.localeCompare(b.name));
-  let allDeltas = [];
+  const files = Array.from(e.target.files)
+    .filter(f=>f.name.endsWith('.png'))
+    .sort((a,b)=>a.name.localeCompare(b.name));
+  
+  let allFrames = [];
   for(const file of files){
-    const {deltas} = await processImageFile(file);
-    allDeltas.push(deltas);
+    const {frame} = await processImageFile(file);
+    allFrames.push(frame);
   }
-  // Output as a JSON string for easy loading
-  outputEl.value = JSON.stringify(allDeltas);
+  // Output directly in CMU Frames format
+  outputEl.value = "Frames = " + JSON.stringify(allFrames, null, 2);
 });
 
 function onOpenCvReady(){ console.log('OpenCV.js ready'); }
